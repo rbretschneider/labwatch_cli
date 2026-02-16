@@ -1,15 +1,15 @@
 # labwatch
 
-A CLI tool for monitoring your homelab infrastructure. Track system resources, Docker containers, systemd services, VPNs, Nginx, DNS, network interfaces, and more — all from the terminal. Schedule checks with cron, get push notifications on failures via [ntfy](https://ntfy.sh), and automate Docker Compose image updates.
+A CLI tool for monitoring your homelab. Tracks system resources, Docker containers, systemd services, VPNs, Nginx, DNS, network interfaces, and more. Schedules checks with cron, sends push notifications on failures via [ntfy](https://ntfy.sh), and can automate Docker Compose image updates.
 
 ## Why labwatch?
 
-Homelabs tend to grow into a sprawl of containers, services, and network configs. Uptime dashboards are great, but they're another thing to host and maintain. **labwatch** takes a different approach: a single CLI that lives on your server, runs from cron, and pushes alerts to your phone when something breaks.
+Homelabs tend to grow into a sprawl of containers, services, and network configs. Uptime dashboards are great, but they're another thing to host and maintain. labwatch takes a different approach: a single CLI that lives on your server, runs from cron, and pushes alerts to your phone when something breaks.
 
-- **No web UI to host** — it's a CLI that writes to stdout and pushes to ntfy
-- **Cron-native** — schedule checks and auto-updates with built-in cron management
-- **Config-driven** — one YAML file defines everything to monitor
-- **Extensible** — plugin architecture for checks and notification backends
+- No web UI to host. It writes to stdout and pushes to ntfy.
+- Cron-native. Schedule checks and auto-updates with built-in cron management.
+- Config-driven. One YAML file defines everything to monitor.
+- Extensible. Plugin architecture for checks and notification backends.
 
 ## What It Monitors
 
@@ -45,7 +45,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install ./cli
 
-# Deactivate — you don't need the venv active to use labwatch
+# Deactivate - you don't need the venv active to use labwatch
 deactivate
 ```
 
@@ -62,7 +62,7 @@ Replace `/path/to/labwatch_cli` with the actual path where you cloned the repo. 
 source ~/.bashrc   # or source ~/.zshrc
 ```
 
-> **Tip:** If you use cron scheduling, cron doesn't load your shell aliases. The `labwatch schedule` commands handle this automatically by resolving the full path to the binary.
+> **Note:** Cron doesn't load shell aliases. The `labwatch schedule` commands handle this by resolving the full path to the binary.
 
 ### Alternative: pip install directly from GitHub
 
@@ -85,7 +85,7 @@ pip install -e ".[test]"
 ## Quick Start
 
 ```bash
-# 1. Interactive setup — generates ~/.config/labwatch/config.yaml
+# 1. Interactive setup - generates ~/.config/labwatch/config.yaml
 labwatch init
 
 # 2. Run all enabled checks
@@ -125,7 +125,7 @@ labwatch schedule update --every 1d
 
 Config lives at `~/.config/labwatch/config.yaml` (Linux/macOS) or `%APPDATA%\labwatch\config.yaml` (Windows).
 
-Run `labwatch init` to generate it interactively, or create it manually:
+Run `labwatch init` to generate it interactively, or create it by hand:
 
 ```yaml
 hostname: "my-server"
@@ -238,7 +238,7 @@ Supported intervals: `5m`, `15m`, `30m`, `1h`, `4h`, `12h`, `1d` (or any `Nm`, `
 
 ## Docker Compose Auto-Updates
 
-labwatch can pull the latest images for your Docker Compose stacks and restart services when images change:
+labwatch can pull the latest images for your Docker Compose stacks and restart services when images change.
 
 ```bash
 # Preview what would be updated
@@ -251,14 +251,14 @@ labwatch update
 labwatch update --force
 ```
 
-It handles tags intelligently:
-- **Rolling tags** (`latest`, `nightly`, `dev`) — always pulled
-- **Pinned versions** (`1.2.3`, `v3.12-alpine`) — skipped unless `--force`
-- **Digest-pinned** (`image@sha256:...`) — always skipped
+Tag handling:
+- Rolling tags (`latest`, `nightly`, `dev`) are always pulled
+- Pinned versions (`1.2.3`, `v3.12-alpine`) are skipped unless you pass `--force`
+- Digest-pinned images (`image@sha256:...`) are always skipped
 
 ## Notifications
 
-labwatch pushes alerts via [ntfy](https://ntfy.sh) when checks fail. Severity maps to ntfy priority:
+labwatch sends alerts via [ntfy](https://ntfy.sh) when checks fail. Severity maps to ntfy priority:
 
 | Severity | ntfy Priority |
 |----------|--------------|
@@ -266,7 +266,7 @@ labwatch pushes alerts via [ntfy](https://ntfy.sh) when checks fail. Severity ma
 | WARNING | High |
 | OK | Low |
 
-Configure the minimum severity threshold to control noise:
+Set the minimum severity threshold to filter out noise:
 
 ```yaml
 notifications:
@@ -279,7 +279,7 @@ notifications:
 
 ## Docker Discovery
 
-Not sure what to monitor? `labwatch discover` scans your running Docker containers and suggests HTTP endpoints for 23+ known services (Plex, Grafana, Home Assistant, Portainer, Jellyfin, Sonarr, Radarr, Pi-hole, and more).
+`labwatch discover` scans your running Docker containers and suggests HTTP endpoints for 23+ known services (Plex, Grafana, Home Assistant, Portainer, Jellyfin, Sonarr, Radarr, Pi-hole, and more). Useful when you're setting up your config for the first time.
 
 ```bash
 labwatch discover
@@ -287,17 +287,17 @@ labwatch discover
 
 ## Project Goals
 
-- **Simple to install and run** — `pip install` and `labwatch init`, no infrastructure required
-- **Cron-first scheduling** — manage monitoring schedules without external tools
-- **Comprehensive homelab coverage** — system resources, Docker, systemd, VPNs, Nginx, DNS, and HTTP endpoints in one tool
-- **Automated maintenance** — Docker Compose image updates on a schedule
-- **Push notifications** — get alerted on your phone via ntfy when things break
-- **Extensible** — add custom checks via the command module or write new check plugins
-- **Scriptable** — JSON output for integration with other tools
+- Simple to install and run. `pip install` and `labwatch init`, nothing else required.
+- Cron-first scheduling. Manage monitoring schedules without external tools.
+- Cover the common homelab stack: system resources, Docker, systemd, VPNs, Nginx, DNS, HTTP endpoints.
+- Automate Docker Compose image updates on a schedule.
+- Push notifications via ntfy when things break.
+- Extensible. Add custom checks via the command module or write new check plugins.
+- Scriptable. JSON output for integration with other tools.
 
 ## Contributing
 
-Contributions are welcome. The check and notification systems use a plugin registry — adding a new check or notification backend is straightforward:
+Contributions are welcome. The check and notification systems use a plugin registry, so adding a new module is pretty simple:
 
 1. Create a module in `src/labwatch/checks/` or `src/labwatch/notifications/`
 2. Implement the base class
@@ -312,4 +312,4 @@ pytest
 
 ## License
 
-GPL v3 — see [LICENSE](LICENSE) for details.
+GPL v3. See [LICENSE](LICENSE) for details.
