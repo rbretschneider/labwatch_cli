@@ -25,6 +25,7 @@ Homelabs tend to grow into a sprawl of containers, services, and network configs
 | **network** | Interface link state, IP assignment, TX activity (VPN tunnels, WireGuard, etc.) |
 | **process** | Verify processes are running by name |
 | **home_assistant** | HA API health, external URL, Google Home/OAuth2 integration |
+| **updates** | Pending system package updates (apt, dnf, yum) |
 | **command** | Run arbitrary shell commands, validate exit codes and output patterns |
 
 ## Install
@@ -53,10 +54,10 @@ Now add an alias to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) so `labwa
 
 ```bash
 # Add to ~/.bashrc or ~/.zshrc
-alias labwatch='/path/to/labwatch_cli/.venv/bin/labwatch'
+alias labwatch="$HOME/labwatch_cli/.venv/bin/labwatch"
 ```
 
-Replace `/path/to/labwatch_cli` with the actual path where you cloned the repo. Then reload your shell:
+Adjust the path if you cloned to a different location. Then reload your shell:
 
 ```bash
 source ~/.bashrc   # or source ~/.zshrc
@@ -91,10 +92,15 @@ labwatch init
 # 2. Run all enabled checks
 labwatch check
 
-# 3. Schedule checks every 5 minutes via cron
-labwatch schedule check --every 5m
+# 3. Run only specific check modules
+labwatch check --only network,dns
 
-# 4. Schedule Docker Compose auto-updates daily
+# 4. Schedule checks at different intervals
+labwatch schedule check --only network --every 1m
+labwatch schedule check --only docker,system --every 30m
+labwatch schedule check --only http,dns --every 5m
+
+# 5. Schedule Docker Compose image updates daily
 labwatch schedule update --every 1d
 ```
 
@@ -112,10 +118,13 @@ labwatch schedule update --every 1d
 | `labwatch notify "Title" "Message"` | Send a one-off push notification |
 | `labwatch config` | Show current config summary |
 | `labwatch config --validate` | Validate config file |
-| `labwatch schedule check --every 5m` | Add check schedule to cron |
+| `labwatch schedule check --every 5m` | Schedule all checks to cron |
+| `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
 | `labwatch schedule update --every 1d` | Add update schedule to cron |
 | `labwatch schedule list` | Show all labwatch cron entries |
 | `labwatch schedule remove` | Remove labwatch cron entries |
+| `labwatch motd` | Plain-text login summary for SSH MOTD |
+| `labwatch motd --only updates` | MOTD for specific modules only |
 | `labwatch summarize` | Plain-English overview of what's configured |
 | `labwatch version` | Show version |
 
@@ -199,6 +208,11 @@ checks:
     names:
       - "redis-server"
 
+  updates:
+    enabled: true
+    warning_threshold: 1        # warn if any updates pending
+    critical_threshold: 50      # critical if 50+ pending
+
   command:
     enabled: false
     commands:
@@ -215,13 +229,24 @@ update:
 
 ## Scheduling with Cron
 
-labwatch manages its own cron entries so you don't have to edit crontab by hand:
+labwatch manages its own cron entries so you don't have to edit crontab by hand.
+
+Use `--only` to run different check modules at different frequencies. Each `--only` combination gets its own cron entry, so they all coexist:
 
 ```bash
-# Run checks every 5 minutes
+# VPN and DNS checks every minute
+labwatch schedule check --only network,dns --every 1m
+
+# Docker and system checks every 30 minutes
+labwatch schedule check --only docker,system --every 30m
+
+# HTTP endpoints every 5 minutes
+labwatch schedule check --only http --every 5m
+
+# Or just schedule everything at the same interval
 labwatch schedule check --every 5m
 
-# Pull and restart Docker Compose stacks daily
+# Docker Compose image updates daily
 labwatch schedule update --every 1d
 
 # See what's scheduled
@@ -285,11 +310,41 @@ notifications:
 labwatch discover
 ```
 
+## Login MOTD
+
+`labwatch motd` prints a plain-text status summary meant for SSH login. Drop a script into `/etc/profile.d/` and you'll see pending updates, failed services, or disk warnings every time you log in.
+
+```bash
+# /etc/profile.d/labwatch.sh
+/opt/labwatch_cli/.venv/bin/labwatch motd 2>/dev/null
+```
+
+Or use `--only` to keep it focused:
+
+```bash
+# Just show pending updates and VPN status on login
+/opt/labwatch_cli/.venv/bin/labwatch motd --only updates,network 2>/dev/null
+```
+
+Example output:
+
+```
+--- labwatch | homelab ---
+  [+] disk:/: 45.2% used (112.3GB free of 234.5GB)
+  [!] updates: 12 pending updates
+  [+] network:wg0:link: UP
+  [X] network:tun0:link: DOWN
+```
+
+The output is plain text with no colors or Rich formatting, so it works in any terminal and won't break non-interactive shells.
+
 ## Project Goals
 
 - Simple to install and run. `pip install` and `labwatch init`, nothing else required.
 - Cron-first scheduling. Manage monitoring schedules without external tools.
 - Cover the common homelab stack: system resources, Docker, systemd, VPNs, Nginx, DNS, HTTP endpoints.
+- Granular scheduling. Different check modules can run at different intervals (VPN every minute, Docker every 30 minutes, etc.).
+- Separate concerns. System updates, Docker image updates, and monitoring checks all run on independent schedules.
 - Automate Docker Compose image updates on a schedule.
 - Push notifications via ntfy when things break.
 - Extensible. Add custom checks via the command module or write new check plugins.

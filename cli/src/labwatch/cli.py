@@ -11,6 +11,7 @@ from rich.table import Table
 
 from labwatch import __version__
 from labwatch.config import load_config, validate_config, default_config_path
+from labwatch.models import Severity
 
 
 def _get_config(ctx) -> dict:
@@ -95,7 +96,7 @@ def config_cmd(ctx, do_validate):
     checks = cfg.get("checks", {})
     check_names = [
         "system", "docker", "http", "nginx", "dns", "ping",
-        "home_assistant", "systemd", "process", "command", "network",
+        "home_assistant", "systemd", "process", "command", "network", "updates",
     ]
     for name in check_names:
         enabled = checks.get(name, {}).get("enabled", False)
@@ -273,14 +274,21 @@ def schedule_group():
 
 @schedule_group.command("check")
 @click.option("--every", required=True, help="Interval (e.g. 5m, 4h, 1d).")
+@click.option("--only", default=None, help="Comma-separated check modules to schedule.")
 @click.pass_context
-def schedule_check(ctx, every):
-    """Schedule periodic checks via cron."""
+def schedule_check(ctx, every, only):
+    """Schedule periodic checks via cron.
+
+    Use --only to schedule specific modules at their own interval.
+    Multiple --only entries coexist in cron, so you can run different
+    checks at different frequencies.
+    """
     from labwatch import scheduler
 
     console = _get_console(ctx)
+    modules = [m.strip() for m in only.split(",")] if only else None
     try:
-        line = scheduler.add_entry("check", every)
+        line = scheduler.add_entry("check", every, modules=modules)
         console.print(f"[green]\u2714[/green] Scheduled: {line}")
     except (ValueError, RuntimeError) as e:
         console.print(f"[red]{e}[/red]")
@@ -526,6 +534,16 @@ def _build_summary(cfg: dict) -> list:
             parts = ["(no commands configured)"]
         enabled_checks.append(("Custom commands", parts))
 
+    # Updates
+    upd_cfg = checks.get("updates", {})
+    if upd_cfg.get("enabled"):
+        warn_t = upd_cfg.get("warning_threshold", 1)
+        crit_t = upd_cfg.get("critical_threshold", 50)
+        parts = [
+            f"warn at {warn_t}+ pending, critical at {crit_t}+",
+        ]
+        enabled_checks.append(("System updates", parts))
+
     # --- Render ------------------------------------------------------------------
     if enabled_checks:
         lines.append(f"Monitoring ({len(enabled_checks)} check groups enabled):")
@@ -542,6 +560,7 @@ def _build_summary(cfg: dict) -> list:
         "nginx": "Nginx", "dns": "DNS", "ping": "Ping",
         "network": "Network", "home_assistant": "Home Assistant",
         "systemd": "Systemd", "process": "Process", "command": "Command",
+        "updates": "Updates",
     }
     disabled = [
         label for key, label in all_names.items()
@@ -560,6 +579,43 @@ def _build_summary(cfg: dict) -> list:
             lines.append(f"  - {d}")
 
     return lines
+
+
+@cli.command("motd")
+@click.option("--only", default=None, help="Comma-separated list of check modules.")
+@click.pass_context
+def motd_cmd(ctx, only):
+    """Print a plain-text login summary for use as an SSH MOTD.
+
+    Add a script to /etc/profile.d/ or /etc/update-motd.d/ that calls
+    this command so you see system status every time you log in.
+    """
+    from labwatch.runner import Runner
+
+    cfg = _get_config(ctx)
+    modules = [m.strip() for m in only.split(",")] if only else None
+    runner = Runner(cfg, verbose=False)
+    report = runner.run(modules)
+
+    _ICONS = {"ok": "+", "warning": "!", "critical": "X", "unknown": "?"}
+
+    hostname = report.hostname
+    failures = [r for r in report.results if r.severity in (
+        Severity.WARNING, Severity.CRITICAL,
+    )]
+
+    click.echo(f"--- labwatch | {hostname} ---")
+
+    if not report.results:
+        click.echo("  No checks ran.")
+        return
+
+    for result in report.results:
+        icon = _ICONS.get(result.severity.value, "?")
+        click.echo(f"  [{icon}] {result.name}: {result.message}")
+
+    if not failures:
+        click.echo("  All checks passed.")
 
 
 @cli.command("init")

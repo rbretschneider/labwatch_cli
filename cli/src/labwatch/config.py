@@ -76,6 +76,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "enabled": False,
             "interfaces": [],
         },
+        "updates": {
+            "enabled": False,
+            "warning_threshold": 1,
+            "critical_threshold": 50,
+        },
     },
     "update": {
         "compose_dirs": [],
@@ -231,6 +236,18 @@ def validate_config(config: Dict[str, Any]) -> list:
             errors.append(
                 f"network.interfaces[{i}].severity must be 'warning' or 'critical'"
             )
+
+    # Validate updates thresholds
+    updates_cfg = checks.get("updates", {})
+    if updates_cfg.get("enabled"):
+        warn_t = updates_cfg.get("warning_threshold", 1)
+        crit_t = updates_cfg.get("critical_threshold", 50)
+        if not isinstance(warn_t, int) or warn_t < 0:
+            errors.append("updates.warning_threshold must be a non-negative integer")
+        if not isinstance(crit_t, int) or crit_t < 0:
+            errors.append("updates.critical_threshold must be a non-negative integer")
+        if isinstance(warn_t, int) and isinstance(crit_t, int) and warn_t >= crit_t:
+            errors.append("updates.warning_threshold must be less than critical_threshold")
 
     compose_dirs = config.get("update", {}).get("compose_dirs", [])
     if not isinstance(compose_dirs, list):

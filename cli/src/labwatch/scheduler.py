@@ -99,19 +99,29 @@ def list_entries() -> List[str]:
     ]
 
 
-def add_entry(subcommand: str, interval: str) -> str:
+def add_entry(subcommand: str, interval: str, modules: Optional[List[str]] = None) -> str:
     """Add (or replace) a labwatch cron entry for the given subcommand.
+
+    If *modules* is provided (e.g. ["network", "dns"]), the entry is scoped
+    to those check modules via ``--only`` and gets its own cron marker so it
+    can coexist with other per-module entries.
 
     Returns the cron line that was added.
     """
     _check_platform()
     cron_expr = parse_interval(interval)
     labwatch_path = resolve_labwatch_path()
-    marker = f"{MARKER_PREFIX}{subcommand}"
-    cron_line = f"{cron_expr} {labwatch_path} {subcommand} {marker}"
+
+    if modules:
+        modules_str = ",".join(sorted(modules))
+        marker = f"{MARKER_PREFIX}{subcommand}:{modules_str}"
+        cron_line = f"{cron_expr} {labwatch_path} {subcommand} --only {modules_str} {marker}"
+    else:
+        marker = f"{MARKER_PREFIX}{subcommand}"
+        cron_line = f"{cron_expr} {labwatch_path} {subcommand} {marker}"
 
     crontab = _read_crontab()
-    # Remove any existing entry with the same marker
+    # Remove any existing entry with the exact same marker
     lines = [
         line for line in crontab.splitlines()
         if marker not in line

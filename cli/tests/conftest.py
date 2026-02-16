@@ -105,6 +105,11 @@ def full_cfg():
                     {"name": "wg0", "severity": "warning"},
                 ],
             },
+            "updates": {
+                "enabled": True,
+                "warning_threshold": 1,
+                "critical_threshold": 50,
+            },
         },
         "update": {
             "compose_dirs": ["/opt/stacks/media", "/opt/stacks/monitoring"],

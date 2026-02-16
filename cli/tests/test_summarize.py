@@ -192,7 +192,7 @@ class TestBuildSummaryNetworkCheck:
 class TestBuildSummaryCheckCounts:
     def test_all_enabled_count(self, full_cfg):
         text = "\n".join(_build_summary(full_cfg))
-        assert "11 check groups enabled" in text
+        assert "12 check groups enabled" in text
 
     def test_nothing_enabled(self):
         cfg = {
@@ -213,7 +213,7 @@ class TestBuildSummaryDisabledList:
         # Default config has system, docker, http enabled; rest disabled
         text = "\n".join(_build_summary(default_cfg))
         disabled_section = text.split("Disabled: ")[1]
-        for name in ["Nginx", "DNS", "Ping", "Network", "Home Assistant", "Systemd", "Process", "Command"]:
+        for name in ["Nginx", "DNS", "Ping", "Network", "Home Assistant", "Systemd", "Process", "Command", "Updates"]:
             assert name in disabled_section
 
     def test_all_enabled_no_disabled(self, full_cfg):
