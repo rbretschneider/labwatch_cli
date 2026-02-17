@@ -14,21 +14,21 @@ class TestNtfyPriorityMapping:
             "topic": "test",
         })
 
-    def test_critical_maps_to_urgent(self):
+    def test_critical_maps_to_high(self):
         n = self._notifier()
-        assert n.SEVERITY_PRIORITY["critical"] == "urgent"
+        assert n.SEVERITY_PRIORITY["critical"] == "high"
 
-    def test_warning_maps_to_high(self):
+    def test_warning_maps_to_default(self):
         n = self._notifier()
-        assert n.SEVERITY_PRIORITY["warning"] == "high"
+        assert n.SEVERITY_PRIORITY["warning"] == "default"
 
     def test_ok_maps_to_low(self):
         n = self._notifier()
         assert n.SEVERITY_PRIORITY["ok"] == "low"
 
-    def test_unknown_maps_to_default(self):
+    def test_unknown_maps_to_low(self):
         n = self._notifier()
-        assert n.SEVERITY_PRIORITY["unknown"] == "default"
+        assert n.SEVERITY_PRIORITY["unknown"] == "low"
 
     @patch("labwatch.notifications.ntfy.requests.post")
     def test_send_passes_priority_header(self, mock_post):
@@ -39,7 +39,7 @@ class TestNtfyPriorityMapping:
         n.send("title", "body", severity="critical")
 
         _, kwargs = mock_post.call_args
-        assert kwargs["headers"]["Priority"] == "urgent"
+        assert kwargs["headers"]["Priority"] == "high"
 
     @patch("labwatch.notifications.ntfy.requests.post")
     def test_send_default_severity(self, mock_post):
@@ -50,7 +50,7 @@ class TestNtfyPriorityMapping:
         n.send("title", "body")
 
         _, kwargs = mock_post.call_args
-        assert kwargs["headers"]["Priority"] == "default"
+        assert kwargs["headers"]["Priority"] == "low"
 
 
 class TestSeverityOrder:

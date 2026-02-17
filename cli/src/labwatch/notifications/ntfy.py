@@ -13,11 +13,11 @@ class NtfyNotifier(BaseNotifier):
         return "ntfy"
 
     SEVERITY_PRIORITY = {
-        "critical": "urgent",
-        "warning": "high",
+        "critical": "high",
+        "warning": "default",
         "ok": "low",
-        "unknown": "default",
-        "default": "default",
+        "unknown": "low",
+        "default": "low",
     }
 
     def send(self, title: str, message: str, severity: str = "default") -> None:
