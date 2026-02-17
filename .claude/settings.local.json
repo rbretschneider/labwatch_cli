@@ -11,7 +11,8 @@
       "Bash(.venv/Scripts/python.exe -m labwatch schedule check:*)",
       "Bash(where:*)",
       "Bash(py -m pytest tests/ -v)",
-      "Bash(py -m pip install:*)"
+      "Bash(py -m pip install:*)",
+      "Bash(git rm:*)"
     ]
   }
 }
