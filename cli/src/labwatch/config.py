@@ -27,7 +27,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                 "disk_critical": 90,
                 "memory_warning": 80,
                 "memory_critical": 90,
-                "cpu_load_multiplier": 2,
+                "cpu_warning": 80,
+                "cpu_critical": 95,
             },
         },
         "docker": {
@@ -159,6 +160,16 @@ def validate_config(config: Dict[str, Any]) -> list:
     mem_crit = thresholds.get("memory_critical", 90)
     if mem_warn >= mem_crit:
         errors.append("memory_warning must be less than memory_critical")
+
+    for key in ("cpu_warning", "cpu_critical"):
+        val = thresholds.get(key)
+        if val is not None and not (0 <= val <= 100):
+            errors.append(f"checks.system.thresholds.{key} must be 0-100, got {val}")
+
+    cpu_warn = thresholds.get("cpu_warning", 80)
+    cpu_crit = thresholds.get("cpu_critical", 95)
+    if cpu_warn >= cpu_crit:
+        errors.append("cpu_warning must be less than cpu_critical")
 
     for ep in checks.get("http", {}).get("endpoints", []):
         if not ep.get("name"):

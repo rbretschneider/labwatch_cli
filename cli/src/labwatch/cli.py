@@ -408,7 +408,7 @@ def _build_summary(cfg: dict) -> list:
         parts = []
         parts.append(f"disk warn {t.get('disk_warning', 80)}%/crit {t.get('disk_critical', 90)}%")
         parts.append(f"mem warn {t.get('memory_warning', 80)}%/crit {t.get('memory_critical', 90)}%")
-        parts.append(f"CPU load multiplier {t.get('cpu_load_multiplier', 2)}x")
+        parts.append(f"cpu warn {t.get('cpu_warning', 80)}%/crit {t.get('cpu_critical', 95)}%")
         enabled_checks.append(("System", parts))
 
     # Docker
@@ -629,12 +629,14 @@ def motd_cmd(ctx, only):
 
 
 @cli.command("init")
+@click.option("--only", default=None,
+              help="Comma-separated wizard sections to run (requires existing config).")
 @click.pass_context
-def init_cmd(ctx):
+def init_cmd(ctx, only):
     """Interactive setup wizard."""
     from labwatch.wizard import run_wizard
 
     config_path = ctx.obj.get("config_path")
     if config_path:
         config_path = Path(config_path)
-    run_wizard(config_path)
+    run_wizard(config_path, only=only)

@@ -89,15 +89,16 @@ class SystemCheck(BaseCheck):
             )]
 
     def _check_cpu(self, thresholds: dict) -> List[CheckResult]:
-        multiplier = thresholds.get("cpu_load_multiplier", 2)
+        warn = thresholds.get("cpu_warning", 80)
+        crit = thresholds.get("cpu_critical", 95)
 
         try:
             cpu_count = psutil.cpu_count() or 1
-            # Use cpu_percent with a short interval as a cross-platform load metric
             cpu_pct = psutil.cpu_percent(interval=1)
-            threshold_pct = (multiplier / cpu_count) * 100
 
-            if cpu_pct >= threshold_pct:
+            if cpu_pct >= crit:
+                sev = Severity.CRITICAL
+            elif cpu_pct >= warn:
                 sev = Severity.WARNING
             else:
                 sev = Severity.OK

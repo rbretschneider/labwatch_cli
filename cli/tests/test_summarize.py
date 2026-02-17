@@ -41,7 +41,7 @@ class TestBuildSummarySystemCheck:
         text = "\n".join(_build_summary(full_cfg))
         assert "disk warn 75%/crit 90%" in text
         assert "mem warn 70%/crit 95%" in text
-        assert "CPU load multiplier 3x" in text
+        assert "cpu warn 80%/crit 95%" in text
 
     def test_system_disabled(self, default_cfg):
         default_cfg["checks"]["system"]["enabled"] = False

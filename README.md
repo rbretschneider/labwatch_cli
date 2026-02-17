@@ -129,13 +129,16 @@ That's it. The wizard handles config generation, notification testing, and cron 
    - **Customize** per check group (choose from sensible frequency options like every 5 min, hourly, daily, weekly)
    - **None** (skip scheduling, print the manual commands for later)
 
-You can re-run `labwatch init` at any time to reconfigure. Use `--config /tmp/test.yaml` to try it without overwriting your real config.
+Re-run `labwatch init` to edit your config — existing values become defaults. Use `labwatch init --only http` to edit a single section.
+
+Use `--config /tmp/test.yaml` to try it without overwriting your real config.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `labwatch init` | Interactive wizard — config, notifications, scheduling |
+| `labwatch init --only docker,http` | Re-run wizard for specific sections only |
 | `labwatch check` | Run all enabled checks, notify on failures |
 | `labwatch check --only system,docker` | Run specific check modules |
 | `labwatch check --json` | JSON output for scripting |
@@ -144,7 +147,8 @@ You can re-run `labwatch init` at any time to reconfigure. Use `--config /tmp/te
 | `labwatch update --dry-run` | Show what would be updated without pulling |
 | `labwatch update --force` | Update even version-pinned tags |
 | `labwatch notify "Title" "Message"` | Send a one-off push notification |
-| `labwatch config` | Show current config summary |
+| `labwatch config` | Show current config summary and file path |
+| `labwatch config --edit` | Open config in your default editor ($EDITOR) |
 | `labwatch config --validate` | Validate config file |
 | `labwatch schedule check --every 5m` | Schedule all checks to cron |
 | `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |

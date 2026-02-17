@@ -34,7 +34,8 @@ def full_cfg():
                     "disk_critical": 90,
                     "memory_warning": 70,
                     "memory_critical": 95,
-                    "cpu_load_multiplier": 3,
+                    "cpu_warning": 80,
+                    "cpu_critical": 95,
                 },
             },
             "docker": {

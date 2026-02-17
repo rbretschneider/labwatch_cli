@@ -14,7 +14,11 @@
       "Bash(py -m pip install:*)",
       "Bash(git rm:*)",
       "Bash(py -m pytest tests/test_scheduler.py -v)",
-      "Bash(py -m pytest:*)"
+      "Bash(py -m pytest:*)",
+      "Bash(py -m labwatch config:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(find:*)",
+      "Bash(xargs:*)"
     ]
   }
 }

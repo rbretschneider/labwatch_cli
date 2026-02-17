@@ -3,11 +3,11 @@
 import platform
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import click
 
-from labwatch.config import DEFAULT_CONFIG, default_config_path, save_config, deep_merge
+from labwatch.config import DEFAULT_CONFIG, default_config_path, load_config, save_config, deep_merge
 from labwatch.discovery import discover_compose_dirs, discover_containers, suggest_endpoints
 
 # Detailed descriptions shown before each check's enable prompt.  These are
@@ -90,6 +90,26 @@ CHECK_DESCRIPTIONS = {
     ),
 }
 
+# Ordered list of wizard section names.
+SECTION_ORDER: List[str] = [
+    "hostname",
+    "notifications",
+    "system",
+    "docker",
+    "http",
+    "nginx",
+    "dns",
+    "ping",
+    "home_assistant",
+    "systemd",
+    "process",
+    "network",
+    "updates",
+    "command",
+    "autoupdate",
+    "scheduling",
+]
+
 
 def _print_description(check_name: str) -> None:
     """Print the description for a check section."""
@@ -98,40 +118,43 @@ def _print_description(check_name: str) -> None:
         click.secho(f"  {desc}", dim=True)
 
 
-def run_wizard(config_path: Optional[Path] = None) -> None:
-    """Walk the user through initial configuration."""
-    path = config_path or default_config_path()
+# ---------------------------------------------------------------------------
+# Helper: review existing list items
+# ---------------------------------------------------------------------------
 
-    click.echo()
-    click.secho("labwatch setup wizard", bold=True)
-    click.secho("=" * 40)
-    click.echo()
-    click.echo(f"  Config file: {path}")
-    click.secho(
-        "  This wizard will create a YAML config file at the path above.\n"
-        "  You can edit it later with any text editor, or re-run this wizard.",
-        dim=True,
-    )
-    click.echo()
+def _review_existing_list(
+    items: list,
+    label: str,
+    format_item: Callable[[Any], str],
+) -> list:
+    """Show existing items, ask 'Keep these?', return kept items."""
+    if not items:
+        return []
+    click.echo(f"\n  Current {label}:")
+    for i, item in enumerate(items, 1):
+        click.echo(f"    {i}. {format_item(item)}")
+    if click.confirm(f"  Keep these {label}?", default=True):
+        return list(items)
+    return []
 
-    if path.exists():
-        if not click.confirm(f"Config already exists at {path}. Overwrite?", default=False):
-            click.echo("Aborted.")
-            return
 
-    config = dict(DEFAULT_CONFIG)
+# ---------------------------------------------------------------------------
+# Per-section functions.  Each mutates *config* in place and reads existing
+# values as defaults so that a re-run shows the previous answers.
+# ---------------------------------------------------------------------------
 
-    # Hostname
+def _section_hostname(config: dict) -> None:
     click.secho("Hostname", bold=True)
     click.secho(
         "  This name identifies your server in alerts and reports.\n"
         "  Use something recognizable — e.g. 'proxmox', 'nas', 'pi-cluster'.",
         dim=True,
     )
-    default_host = platform.node() or "homelab"
+    default_host = config.get("hostname") or platform.node() or "homelab"
     config["hostname"] = click.prompt("Hostname", default=default_host)
 
-    # ntfy configuration
+
+def _section_notifications(config: dict) -> None:
     click.echo()
     click.secho("Notification setup (ntfy)", bold=True)
     click.secho(
@@ -141,8 +164,17 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
         "  ntfy.sh. Install the ntfy app on your phone to receive alerts.",
         dim=True,
     )
-    ntfy_enabled = click.confirm("Enable ntfy notifications?", default=True)
-    config["notifications"] = {"ntfy": {"enabled": ntfy_enabled}}
+
+    existing_ntfy = config.get("notifications", {}).get("ntfy", {})
+    ntfy_enabled = click.confirm(
+        "Enable ntfy notifications?",
+        default=existing_ntfy.get("enabled", True),
+    )
+
+    # Merge rather than replace — preserves min_severity and other keys.
+    config.setdefault("notifications", {})
+    config["notifications"].setdefault("ntfy", {})
+    config["notifications"]["ntfy"]["enabled"] = ntfy_enabled
 
     if ntfy_enabled:
         click.secho(
@@ -151,7 +183,8 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             dim=True,
         )
         config["notifications"]["ntfy"]["server"] = click.prompt(
-            "ntfy server URL", default="https://ntfy.sh"
+            "ntfy server URL",
+            default=existing_ntfy.get("server", "https://ntfy.sh"),
         )
         click.secho(
             "  The topic is like a channel name. Anyone who subscribes to this\n"
@@ -160,15 +193,25 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             dim=True,
         )
         config["notifications"]["ntfy"]["topic"] = click.prompt(
-            "ntfy topic", default="homelab_alerts"
+            "ntfy topic",
+            default=existing_ntfy.get("topic", "homelab_alerts"),
         )
 
-    # System checks
+
+def _section_system(config: dict) -> None:
     click.echo()
     click.secho("System checks", bold=True)
     _print_description("system")
-    sys_enabled = click.confirm("Enable system checks (disk, memory, CPU)?", default=True)
-    config["checks"] = {"system": {"enabled": sys_enabled}}
+
+    existing = config.get("checks", {}).get("system", {})
+    sys_enabled = click.confirm(
+        "Enable system checks (disk, memory, CPU)?",
+        default=existing.get("enabled", True),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("system", {})
+    config["checks"]["system"]["enabled"] = sys_enabled
 
     if sys_enabled:
         click.secho(
@@ -176,52 +219,101 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             "  'critical' means something needs immediate attention.",
             dim=True,
         )
+        existing_t = existing.get("thresholds", {})
         config["checks"]["system"]["thresholds"] = {
-            "disk_warning": click.prompt("Disk warning threshold (%)", default=80, type=int),
-            "disk_critical": click.prompt("Disk critical threshold (%)", default=90, type=int),
-            "memory_warning": click.prompt("Memory warning threshold (%)", default=80, type=int),
-            "memory_critical": click.prompt("Memory critical threshold (%)", default=90, type=int),
-            "cpu_load_multiplier": click.prompt(
-                "CPU load multiplier (alert when load exceeds CPU count * this value)",
-                default=2, type=int,
+            "disk_warning": click.prompt(
+                "Disk warning threshold (%)",
+                default=existing_t.get("disk_warning", 80), type=int,
+            ),
+            "disk_critical": click.prompt(
+                "Disk critical threshold (%)",
+                default=existing_t.get("disk_critical", 90), type=int,
+            ),
+            "memory_warning": click.prompt(
+                "Memory warning threshold (%)",
+                default=existing_t.get("memory_warning", 80), type=int,
+            ),
+            "memory_critical": click.prompt(
+                "Memory critical threshold (%)",
+                default=existing_t.get("memory_critical", 90), type=int,
+            ),
+            "cpu_warning": click.prompt(
+                "CPU warning threshold (%)",
+                default=existing_t.get("cpu_warning", 80), type=int,
+            ),
+            "cpu_critical": click.prompt(
+                "CPU critical threshold (%)",
+                default=existing_t.get("cpu_critical", 95), type=int,
             ),
         }
 
-    # Docker checks
+
+def _section_docker(config: dict) -> None:
     click.echo()
     click.secho("Docker checks", bold=True)
     _print_description("docker")
 
+    existing = config.get("checks", {}).get("docker", {})
+
     containers = discover_containers()
     if containers is not None:
         click.echo(f"Found {len(containers)} Docker container(s).")
-        docker_enabled = click.confirm("Enable Docker monitoring?", default=True)
+        docker_enabled = click.confirm(
+            "Enable Docker monitoring?",
+            default=existing.get("enabled", True),
+        )
     else:
         click.echo("Docker not available on this system.")
-        docker_enabled = click.confirm("Enable Docker monitoring anyway (for remote use)?", default=False)
+        docker_enabled = click.confirm(
+            "Enable Docker monitoring anyway (for remote use)?",
+            default=existing.get("enabled", False),
+        )
 
+    config.setdefault("checks", {})
     config["checks"]["docker"] = {
         "enabled": docker_enabled,
-        "watch_stopped": True,
-        "containers": [],
+        "watch_stopped": existing.get("watch_stopped", True),
+        "containers": existing.get("containers", []),
     }
 
-    # HTTP checks
+
+def _section_http(config: dict) -> None:
     click.echo()
     click.secho("HTTP endpoint checks", bold=True)
     _print_description("http")
-    http_enabled = click.confirm("Enable HTTP endpoint checks?", default=True)
-    config["checks"]["http"] = {"enabled": http_enabled, "endpoints": []}
 
-    if http_enabled and containers:
-        suggestions = suggest_endpoints(containers)
-        if suggestions:
-            click.echo("Detected services from Docker containers:")
-            for i, s in enumerate(suggestions, 1):
-                click.echo(f"  {i}. {s['name']} ({s['url']})")
+    existing = config.get("checks", {}).get("http", {})
+    http_enabled = click.confirm(
+        "Enable HTTP endpoint checks?",
+        default=existing.get("enabled", True),
+    )
 
-            if click.confirm("Add these suggested endpoints?", default=True):
-                config["checks"]["http"]["endpoints"] = suggestions
+    config.setdefault("checks", {})
+    config["checks"].setdefault("http", {})
+    config["checks"]["http"]["enabled"] = http_enabled
+
+    existing_endpoints = existing.get("endpoints", [])
+
+    # Review existing endpoints
+    kept = _review_existing_list(
+        existing_endpoints,
+        "endpoints",
+        lambda ep: f"{ep.get('name', '?')} ({ep.get('url', '?')})",
+    )
+    config["checks"]["http"]["endpoints"] = kept
+
+    # Only suggest Docker endpoints on fresh config (no existing endpoints)
+    if http_enabled and not existing_endpoints:
+        containers = discover_containers()
+        if containers:
+            suggestions = suggest_endpoints(containers)
+            if suggestions:
+                click.echo("Detected services from Docker containers:")
+                for i, s in enumerate(suggestions, 1):
+                    click.echo(f"  {i}. {s['name']} ({s['url']})")
+
+                if click.confirm("Add these suggested endpoints?", default=True):
+                    config["checks"]["http"]["endpoints"].extend(suggestions)
 
     if http_enabled:
         click.secho(
@@ -232,24 +324,41 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
         while click.confirm("Add a custom HTTP endpoint?", default=False):
             name = click.prompt("  Endpoint name (a label for this check)")
             url = click.prompt("  URL (e.g. http://localhost:8080/health)")
-            timeout = click.prompt("  Timeout in seconds (how long to wait for a response)", default=10, type=int)
+            timeout = click.prompt(
+                "  Timeout in seconds (how long to wait for a response)",
+                default=10, type=int,
+            )
             config["checks"]["http"]["endpoints"].append({
                 "name": name,
                 "url": url,
                 "timeout": timeout,
             })
 
-    # Nginx checks
+
+def _section_nginx(config: dict) -> None:
     click.echo()
     click.secho("Nginx monitoring", bold=True)
     _print_description("nginx")
-    nginx_enabled = click.confirm("Enable Nginx monitoring?", default=False)
-    config["checks"]["nginx"] = {
-        "enabled": nginx_enabled,
-        "container": "",
-        "config_test": True,
-        "endpoints": [],
-    }
+
+    existing = config.get("checks", {}).get("nginx", {})
+    nginx_enabled = click.confirm(
+        "Enable Nginx monitoring?",
+        default=existing.get("enabled", False),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("nginx", {})
+    config["checks"]["nginx"]["enabled"] = nginx_enabled
+    config["checks"]["nginx"].setdefault("container", existing.get("container", ""))
+    config["checks"]["nginx"].setdefault("config_test", existing.get("config_test", True))
+
+    existing_endpoints = existing.get("endpoints", [])
+    kept = _review_existing_list(
+        existing_endpoints,
+        "endpoints",
+        lambda ep: ep,
+    )
+    config["checks"]["nginx"]["endpoints"] = kept
 
     if nginx_enabled:
         click.secho(
@@ -260,7 +369,7 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
         )
         container = click.prompt(
             "  Nginx Docker container name (empty if installed on host)",
-            default="", show_default=False,
+            default=existing.get("container", ""), show_default=False,
         )
         config["checks"]["nginx"]["container"] = container.strip()
 
@@ -271,7 +380,10 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             "  alerts. You can always run 'sudo nginx -t' manually instead.",
             dim=True,
         )
-        config_test = click.confirm("  Enable nginx config test (nginx -t)?", default=bool(container))
+        config_test = click.confirm(
+            "  Enable nginx config test (nginx -t)?",
+            default=existing.get("config_test", bool(container)),
+        )
         config["checks"]["nginx"]["config_test"] = config_test
 
         click.secho(
@@ -283,12 +395,25 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             url = click.prompt("    URL (e.g. https://mydomain.com)")
             config["checks"]["nginx"]["endpoints"].append(url.strip())
 
-    # DNS checks
+
+def _section_dns(config: dict) -> None:
     click.echo()
     click.secho("DNS resolution monitoring", bold=True)
     _print_description("dns")
-    dns_enabled = click.confirm("Enable DNS resolution monitoring?", default=False)
-    config["checks"]["dns"] = {"enabled": dns_enabled, "domains": []}
+
+    existing = config.get("checks", {}).get("dns", {})
+    dns_enabled = click.confirm(
+        "Enable DNS resolution monitoring?",
+        default=existing.get("enabled", False),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("dns", {})
+    config["checks"]["dns"]["enabled"] = dns_enabled
+
+    existing_domains = existing.get("domains", [])
+    kept = _review_existing_list(existing_domains, "domains", lambda d: d)
+    config["checks"]["dns"]["domains"] = kept
 
     if dns_enabled:
         click.secho(
@@ -306,12 +431,26 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
                 break
             config["checks"]["dns"]["domains"].append(domain.strip())
 
-    # Ping checks
+
+def _section_ping(config: dict) -> None:
     click.echo()
     click.secho("Ping/connectivity monitoring", bold=True)
     _print_description("ping")
-    ping_enabled = click.confirm("Enable ping/connectivity monitoring?", default=False)
-    config["checks"]["ping"] = {"enabled": ping_enabled, "hosts": [], "timeout": 5}
+
+    existing = config.get("checks", {}).get("ping", {})
+    ping_enabled = click.confirm(
+        "Enable ping/connectivity monitoring?",
+        default=existing.get("enabled", False),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("ping", {})
+    config["checks"]["ping"]["enabled"] = ping_enabled
+    config["checks"]["ping"].setdefault("timeout", existing.get("timeout", 5))
+
+    existing_hosts = existing.get("hosts", [])
+    kept = _review_existing_list(existing_hosts, "hosts", lambda h: h)
+    config["checks"]["ping"]["hosts"] = kept
 
     if ping_enabled:
         click.secho(
@@ -329,18 +468,26 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
                 break
             config["checks"]["ping"]["hosts"].append(host.strip())
 
-    # Home Assistant checks
+
+def _section_home_assistant(config: dict) -> None:
     click.echo()
     click.secho("Home Assistant monitoring", bold=True)
     _print_description("home_assistant")
-    ha_enabled = click.confirm("Enable Home Assistant monitoring?", default=False)
-    config["checks"]["home_assistant"] = {
-        "enabled": ha_enabled,
-        "url": "http://localhost:8123",
-        "external_url": "",
-        "token": "",
-        "google_home": True,
-    }
+
+    existing = config.get("checks", {}).get("home_assistant", {})
+    ha_enabled = click.confirm(
+        "Enable Home Assistant monitoring?",
+        default=existing.get("enabled", False),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("home_assistant", {})
+    config["checks"]["home_assistant"]["enabled"] = ha_enabled
+    # Preserve defaults from existing config
+    config["checks"]["home_assistant"].setdefault("url", existing.get("url", "http://localhost:8123"))
+    config["checks"]["home_assistant"].setdefault("external_url", existing.get("external_url", ""))
+    config["checks"]["home_assistant"].setdefault("token", existing.get("token", ""))
+    config["checks"]["home_assistant"].setdefault("google_home", existing.get("google_home", True))
 
     if ha_enabled:
         click.secho(
@@ -349,7 +496,8 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             dim=True,
         )
         config["checks"]["home_assistant"]["url"] = click.prompt(
-            "  Local HA URL", default="http://localhost:8123"
+            "  Local HA URL",
+            default=existing.get("url", "http://localhost:8123"),
         )
         click.secho(
             "  If you access HA remotely (e.g. via Nabu Casa or your own\n"
@@ -358,7 +506,7 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
         )
         ext_url = click.prompt(
             "  External HA URL (empty to skip)",
-            default="", show_default=False,
+            default=existing.get("external_url", ""), show_default=False,
         )
         config["checks"]["home_assistant"]["external_url"] = ext_url.strip()
         click.secho(
@@ -369,7 +517,7 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
         )
         token = click.prompt(
             "  Long-lived access token (empty to skip deep checks)",
-            default="", show_default=False,
+            default=existing.get("token", ""), show_default=False,
         )
         config["checks"]["home_assistant"]["token"] = token.strip()
         click.secho(
@@ -378,15 +526,33 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             dim=True,
         )
         config["checks"]["home_assistant"]["google_home"] = click.confirm(
-            "  Check Google Home API connectivity?", default=True,
+            "  Check Google Home API connectivity?",
+            default=existing.get("google_home", True),
         )
 
-    # Systemd unit monitoring
+
+def _section_systemd(config: dict) -> None:
     click.echo()
     click.secho("Systemd unit monitoring", bold=True)
     _print_description("systemd")
-    systemd_enabled = click.confirm("Enable systemd unit monitoring?", default=False)
-    config["checks"]["systemd"] = {"enabled": systemd_enabled, "units": []}
+
+    existing = config.get("checks", {}).get("systemd", {})
+    systemd_enabled = click.confirm(
+        "Enable systemd unit monitoring?",
+        default=existing.get("enabled", False),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("systemd", {})
+    config["checks"]["systemd"]["enabled"] = systemd_enabled
+
+    existing_units = existing.get("units", [])
+    kept = _review_existing_list(
+        existing_units,
+        "units",
+        lambda u: u if isinstance(u, str) else f"{u.get('name', '?')} ({u.get('severity', 'critical')})",
+    )
+    config["checks"]["systemd"]["units"] = kept
 
     if systemd_enabled:
         click.secho(
@@ -404,12 +570,25 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
                 break
             config["checks"]["systemd"]["units"].append(unit.strip())
 
-    # Process monitoring
+
+def _section_process(config: dict) -> None:
     click.echo()
     click.secho("Process monitoring", bold=True)
     _print_description("process")
-    process_enabled = click.confirm("Enable process monitoring?", default=False)
-    config["checks"]["process"] = {"enabled": process_enabled, "names": []}
+
+    existing = config.get("checks", {}).get("process", {})
+    process_enabled = click.confirm(
+        "Enable process monitoring?",
+        default=existing.get("enabled", False),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("process", {})
+    config["checks"]["process"]["enabled"] = process_enabled
+
+    existing_names = existing.get("names", [])
+    kept = _review_existing_list(existing_names, "process names", lambda n: n)
+    config["checks"]["process"]["names"] = kept
 
     if process_enabled:
         click.secho(
@@ -427,12 +606,29 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
                 break
             config["checks"]["process"]["names"].append(proc.strip())
 
-    # Network interface monitoring
+
+def _section_network(config: dict) -> None:
     click.echo()
     click.secho("Network interface monitoring", bold=True)
     _print_description("network")
-    network_enabled = click.confirm("Enable network interface monitoring?", default=False)
-    config["checks"]["network"] = {"enabled": network_enabled, "interfaces": []}
+
+    existing = config.get("checks", {}).get("network", {})
+    network_enabled = click.confirm(
+        "Enable network interface monitoring?",
+        default=existing.get("enabled", False),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("network", {})
+    config["checks"]["network"]["enabled"] = network_enabled
+
+    existing_interfaces = existing.get("interfaces", [])
+    kept = _review_existing_list(
+        existing_interfaces,
+        "interfaces",
+        lambda i: f"{i.get('name', '?')} ({i.get('severity', 'critical')})",
+    )
+    config["checks"]["network"]["interfaces"] = kept
 
     if network_enabled:
         click.secho(
@@ -461,16 +657,23 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
                 {"name": iface.strip(), "severity": sev}
             )
 
-    # Updates check
+
+def _section_updates(config: dict) -> None:
     click.echo()
     click.secho("Package updates monitoring", bold=True)
     _print_description("updates")
-    updates_enabled = click.confirm("Enable package updates monitoring?", default=False)
-    config["checks"]["updates"] = {
-        "enabled": updates_enabled,
-        "warning_threshold": 1,
-        "critical_threshold": 50,
-    }
+
+    existing = config.get("checks", {}).get("updates", {})
+    updates_enabled = click.confirm(
+        "Enable package updates monitoring?",
+        default=existing.get("enabled", False),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("updates", {})
+    config["checks"]["updates"]["enabled"] = updates_enabled
+    config["checks"]["updates"].setdefault("warning_threshold", existing.get("warning_threshold", 1))
+    config["checks"]["updates"].setdefault("critical_threshold", existing.get("critical_threshold", 50))
 
     if updates_enabled:
         click.secho(
@@ -480,18 +683,37 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             dim=True,
         )
         config["checks"]["updates"]["warning_threshold"] = click.prompt(
-            "  Warning threshold (number of pending updates)", default=1, type=int,
+            "  Warning threshold (number of pending updates)",
+            default=existing.get("warning_threshold", 1), type=int,
         )
         config["checks"]["updates"]["critical_threshold"] = click.prompt(
-            "  Critical threshold (number of pending updates)", default=50, type=int,
+            "  Critical threshold (number of pending updates)",
+            default=existing.get("critical_threshold", 50), type=int,
         )
 
-    # Custom command checks
+
+def _section_command(config: dict) -> None:
     click.echo()
     click.secho("Custom command checks", bold=True)
     _print_description("command")
-    command_enabled = click.confirm("Enable custom command checks?", default=False)
-    config["checks"]["command"] = {"enabled": command_enabled, "commands": []}
+
+    existing = config.get("checks", {}).get("command", {})
+    command_enabled = click.confirm(
+        "Enable custom command checks?",
+        default=existing.get("enabled", False),
+    )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("command", {})
+    config["checks"]["command"]["enabled"] = command_enabled
+
+    existing_commands = existing.get("commands", [])
+    kept = _review_existing_list(
+        existing_commands,
+        "commands",
+        lambda c: f"{c.get('name', '?')}: {c.get('command', '?')}",
+    )
+    config["checks"]["command"]["commands"] = kept
 
     if command_enabled:
         click.secho(
@@ -512,12 +734,13 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
                 type=click.Choice(["critical", "warning"]),
                 default="critical",
             )
-            entry = {"name": cmd_name, "command": cmd_command, "severity": cmd_severity}
+            entry: Dict[str, Any] = {"name": cmd_name, "command": cmd_command, "severity": cmd_severity}
             if cmd_expect.strip():
                 entry["expect_output"] = cmd_expect.strip()
             config["checks"]["command"]["commands"].append(entry)
 
-    # Docker auto-updates
+
+def _section_autoupdate(config: dict) -> None:
     click.echo()
     click.secho("Docker auto-updates", bold=True)
     click.secho(
@@ -526,22 +749,113 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
         "  followed by 'docker compose up -d' in each configured directory.",
         dim=True,
     )
-    update_enabled = click.confirm("Configure Docker Compose auto-updates?", default=False)
-    config["update"] = {"compose_dirs": []}
+
+    existing_dirs = config.get("update", {}).get("compose_dirs", [])
+
+    # Review existing dirs
+    kept = _review_existing_list(existing_dirs, "compose directories", lambda d: d)
+    config.setdefault("update", {})
+    config["update"]["compose_dirs"] = kept
+
+    update_enabled = click.confirm("Configure Docker Compose auto-updates?", default=bool(kept))
 
     if update_enabled:
         _configure_auto_updates(config)
 
-    # Save
-    click.echo()
-    saved_path = save_config(config, path)
-    click.secho(f"Config saved to {saved_path}", fg="green", bold=True)
 
-    # Show what was configured
-    _print_summary(config, saved_path)
-
-    # Scheduling
+def _section_scheduling(config: dict) -> None:
     _offer_scheduling(config)
+
+
+# Map section names to their functions.
+SECTION_FUNCTIONS: Dict[str, Callable[[dict], None]] = {
+    "hostname": _section_hostname,
+    "notifications": _section_notifications,
+    "system": _section_system,
+    "docker": _section_docker,
+    "http": _section_http,
+    "nginx": _section_nginx,
+    "dns": _section_dns,
+    "ping": _section_ping,
+    "home_assistant": _section_home_assistant,
+    "systemd": _section_systemd,
+    "process": _section_process,
+    "network": _section_network,
+    "updates": _section_updates,
+    "command": _section_command,
+    "autoupdate": _section_autoupdate,
+    "scheduling": _section_scheduling,
+}
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -> None:
+    """Walk the user through initial configuration."""
+    path = config_path or default_config_path()
+    is_rerun = path.exists()
+
+    # Validate --only
+    if only is not None:
+        requested = [s.strip() for s in only.split(",") if s.strip()]
+        invalid = [s for s in requested if s not in SECTION_FUNCTIONS]
+        if invalid:
+            valid_list = ", ".join(SECTION_ORDER)
+            click.secho(
+                f"Unknown section(s): {', '.join(invalid)}\n"
+                f"Valid sections: {valid_list}",
+                fg="red",
+            )
+            raise SystemExit(1)
+        if not is_rerun:
+            click.secho(
+                "No existing config found. Run labwatch init first (without --only).",
+                fg="red",
+            )
+            raise SystemExit(1)
+        sections_to_run = requested
+    else:
+        sections_to_run = list(SECTION_ORDER)
+
+    click.echo()
+    click.secho("labwatch setup wizard", bold=True)
+    click.secho("=" * 40)
+    click.echo()
+    click.echo(f"  Config file: {path}")
+
+    if is_rerun:
+        config = load_config(path)
+        click.secho(
+            "  Existing config loaded. Current values shown as defaults\n"
+            "  in [brackets] — press Enter to keep them.",
+            dim=True,
+        )
+    else:
+        config = deep_merge(DEFAULT_CONFIG, {})
+        click.secho(
+            "  This wizard will create a YAML config file at the path above.\n"
+            "  You can edit it later with any text editor, or re-run this wizard.",
+            dim=True,
+        )
+
+    click.echo()
+
+    # Run selected sections
+    for section_name in SECTION_ORDER:
+        if section_name not in sections_to_run:
+            continue
+        SECTION_FUNCTIONS[section_name](config)
+
+    # Save (always — even with --only we write the full config back)
+    if "scheduling" not in sections_to_run:
+        # scheduling section handles its own save+summary flow;
+        # when it's not included we save here.
+        click.echo()
+        saved_path = save_config(config, path)
+        click.secho(f"Config saved to {saved_path}", fg="green", bold=True)
+        _print_summary(config, saved_path)
 
 
 def _configure_auto_updates(config: dict) -> None:
@@ -758,6 +1072,14 @@ _UPDATE_CHOICES: List[Tuple[str, str]] = [
 
 def _offer_scheduling(config: dict) -> None:
     """Explain the execution model and offer to install cron entries."""
+    # Save config before scheduling (so cron jobs use up-to-date config)
+    path = default_config_path()
+    saved_path = save_config(config, path)
+    click.echo()
+    click.secho(f"Config saved to {saved_path}", fg="green", bold=True)
+
+    _print_summary(config, saved_path)
+
     _section_break()
     click.secho("Scheduling", bold=True)
     click.echo(

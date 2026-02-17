@@ -52,6 +52,7 @@ The `labwatch init` wizard handles everything: config generation, notification t
 | Command | Description |
 |---------|-------------|
 | `labwatch init` | Interactive wizard — config, notifications, scheduling |
+| `labwatch init --only docker,http` | Re-run wizard for specific sections only |
 | `labwatch check` | Run all enabled checks, notify on failures |
 | `labwatch check --only system,docker` | Run specific check modules |
 | `labwatch check --json` | JSON output for scripting/cron |
@@ -60,7 +61,8 @@ The `labwatch init` wizard handles everything: config generation, notification t
 | `labwatch update --dry-run` | Preview what would be updated |
 | `labwatch update --force` | Update even version-pinned tags |
 | `labwatch notify "Title" "Message"` | Send a one-off notification |
-| `labwatch config` | Show current config summary |
+| `labwatch config` | Show current config summary and file path |
+| `labwatch config --edit` | Open config in your default editor ($EDITOR) |
 | `labwatch config --validate` | Validate config file |
 | `labwatch schedule check --every 5m` | Schedule checks to cron |
 | `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
@@ -94,7 +96,7 @@ Global options: `--config PATH`, `--no-color`, `--verbose`
 
 Config is a single YAML file at `~/.config/labwatch/config.yaml` (Linux/macOS) or `%APPDATA%\labwatch\config.yaml` (Windows). On Linux, `.config` is a hidden directory — use `ls -a ~` to see it, or open directly: `nano ~/.config/labwatch/config.yaml`.
 
-Run `labwatch config` to see the resolved path and summary. Run `labwatch init` to generate it interactively. See the [main README](../README.md) for a full config example.
+Run `labwatch config` to see the resolved path and summary. Run `labwatch init` to generate it interactively. Re-run `labwatch init` to edit your config — existing values become defaults. Use `labwatch init --only http` to edit a single section. See the [main README](../README.md) for a full config example.
 
 ## Scheduling
 
