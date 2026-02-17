@@ -55,12 +55,22 @@ def version():
 @cli.command("config")
 @click.option("--validate", "do_validate", is_flag=True,
               help="Validate the config file.")
+@click.option("--edit", "do_edit", is_flag=True,
+              help="Open the config file in your default editor.")
 @click.pass_context
-def config_cmd(ctx, do_validate):
+def config_cmd(ctx, do_validate, do_edit):
     """Show or validate the current configuration."""
     console = _get_console(ctx)
     config_path = ctx.obj.get("config_path")
     resolved_path = Path(config_path) if config_path else default_config_path()
+
+    if do_edit:
+        if not resolved_path.exists():
+            console.print(f"[red]Config file does not exist:[/red] {resolved_path}")
+            console.print("Run [bold]labwatch init[/bold] to create it.")
+            raise SystemExit(1)
+        click.edit(filename=str(resolved_path))
+        return
 
     cfg = _get_config(ctx)
 
