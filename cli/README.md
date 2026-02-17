@@ -92,9 +92,9 @@ Global options: `--config PATH`, `--no-color`, `--verbose`
 
 ## Configuration
 
-Config lives at `~/.config/labwatch/config.yaml` (Linux/macOS) or `%APPDATA%\labwatch\config.yaml` (Windows). Run `labwatch init` to generate it interactively, or create manually.
+Config is a single YAML file at `~/.config/labwatch/config.yaml` (Linux/macOS) or `%APPDATA%\labwatch\config.yaml` (Windows). On Linux, `.config` is a hidden directory — use `ls -a ~` to see it, or open directly: `nano ~/.config/labwatch/config.yaml`.
 
-See the [main README](../README.md) for a full config example and detailed documentation.
+Run `labwatch config` to see the resolved path and summary. Run `labwatch init` to generate it interactively. See the [main README](../README.md) for a full config example.
 
 ## Scheduling
 

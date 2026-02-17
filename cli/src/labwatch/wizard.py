@@ -106,6 +106,13 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     click.secho("labwatch setup wizard", bold=True)
     click.secho("=" * 40)
     click.echo()
+    click.echo(f"  Config file: {path}")
+    click.secho(
+        "  This wizard will create a YAML config file at the path above.\n"
+        "  You can edit it later with any text editor, or re-run this wizard.",
+        dim=True,
+    )
+    click.echo()
 
     if path.exists():
         if not click.confirm(f"Config already exists at {path}. Overwrite?", default=False):
@@ -531,7 +538,7 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     click.secho(f"Config saved to {saved_path}", fg="green", bold=True)
 
     # Show what was configured
-    _print_summary(config)
+    _print_summary(config, saved_path)
 
     # Scheduling
     _offer_scheduling(config)
@@ -622,11 +629,16 @@ def _section_break() -> None:
 # Post-config summary
 # ---------------------------------------------------------------------------
 
-def _print_summary(config: dict) -> None:
+def _print_summary(config: dict, config_path: Path) -> None:
     """Print a recap of what was configured."""
     _section_break()
     click.secho("What you set up", bold=True)
     click.secho("-" * 40)
+    click.echo(f"  Config file: {config_path}")
+    click.secho(
+        "  ^ Edit this file to change settings without re-running the wizard.",
+        dim=True,
+    )
 
     # Notifications
     ntfy = config.get("notifications", {}).get("ntfy", {})
@@ -882,6 +894,8 @@ def _print_done() -> None:
     click.secho("Useful commands", bold=True)
     click.echo("  labwatch check               # run all checks once")
     click.echo("  labwatch check --only system  # run one check module")
+    click.echo("  labwatch config               # show config path and summary")
     click.echo("  labwatch config --validate    # verify your config")
     click.echo("  labwatch summarize            # see what's being monitored")
     click.echo("  labwatch schedule list        # view cron schedule")
+    click.echo("  labwatch init                 # re-run this wizard")

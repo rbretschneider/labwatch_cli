@@ -161,9 +161,19 @@ You can re-run `labwatch init` at any time to reconfigure. Use `--config /tmp/te
 
 ## Configuration
 
-Config lives at `~/.config/labwatch/config.yaml` (Linux/macOS) or `%APPDATA%\labwatch\config.yaml` (Windows).
+Config is a single YAML file. `labwatch init` creates it for you, and the wizard shows the full path at the start and end of setup. You can edit it with any text editor or re-run the wizard.
 
-Run `labwatch init` to generate it interactively, or create it by hand:
+**Where is it?**
+
+| OS | Path |
+|----|------|
+| Linux | `/home/yourusername/.config/labwatch/config.yaml` |
+| macOS | `/Users/yourusername/.config/labwatch/config.yaml` |
+| Windows | `C:\Users\yourusername\AppData\Roaming\labwatch\config.yaml` |
+
+> **Note:** On Linux/macOS, `.config` is a hidden directory (the dot prefix hides it from `ls` by default). Use `ls -a` to see it, or just open the file directly: `nano ~/.config/labwatch/config.yaml`
+
+Run `labwatch config` at any time to see the resolved path and a summary of what's configured. Run `labwatch init` to regenerate it interactively, or edit by hand:
 
 ```yaml
 hostname: "my-server"
