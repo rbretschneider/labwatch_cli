@@ -16,10 +16,12 @@ class NginxCheck(BaseCheck):
         nginx_cfg = self.config.get("checks", {}).get("nginx", {})
         container = nginx_cfg.get("container", "")
         endpoints = nginx_cfg.get("endpoints", [])
+        config_test = nginx_cfg.get("config_test", True)
 
         results = []
         results.append(self._check_service(container))
-        results.append(self._check_config(container))
+        if config_test:
+            results.append(self._check_config(container))
         results.extend(self._check_endpoints(endpoints))
         return results
 
