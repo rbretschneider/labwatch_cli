@@ -42,6 +42,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "nginx": {
             "enabled": False,
             "container": "",
+            "config_test": True,
             "endpoints": [],
         },
         "dns": {

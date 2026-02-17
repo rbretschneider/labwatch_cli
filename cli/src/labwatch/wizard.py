@@ -237,7 +237,12 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     click.secho("Nginx monitoring", bold=True)
     _print_description("nginx")
     nginx_enabled = click.confirm("Enable Nginx monitoring?", default=False)
-    config["checks"]["nginx"] = {"enabled": nginx_enabled, "container": "", "endpoints": []}
+    config["checks"]["nginx"] = {
+        "enabled": nginx_enabled,
+        "container": "",
+        "config_test": True,
+        "endpoints": [],
+    }
 
     if nginx_enabled:
         click.secho(
@@ -251,6 +256,16 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             default="", show_default=False,
         )
         config["checks"]["nginx"]["container"] = container.strip()
+
+        click.secho(
+            "  The config test runs 'nginx -t' to check for syntax errors.\n"
+            "  On the host (non-Docker) this requires root/sudo. If you don't\n"
+            "  have passwordless sudo set up, disable this to avoid repeated\n"
+            "  alerts. You can always run 'sudo nginx -t' manually instead.",
+            dim=True,
+        )
+        config_test = click.confirm("  Enable nginx config test (nginx -t)?", default=bool(container))
+        config["checks"]["nginx"]["config_test"] = config_test
 
         click.secho(
             "  Optionally add URLs that Nginx serves. labwatch will request\n"
