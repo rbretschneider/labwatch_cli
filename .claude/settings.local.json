@@ -12,7 +12,9 @@
       "Bash(where:*)",
       "Bash(py -m pytest tests/ -v)",
       "Bash(py -m pip install:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(py -m pytest tests/test_scheduler.py -v)",
+      "Bash(py -m pytest:*)"
     ]
   }
 }

@@ -10,53 +10,83 @@ import click
 from labwatch.config import DEFAULT_CONFIG, default_config_path, save_config, deep_merge
 from labwatch.discovery import discover_compose_dirs, discover_containers, suggest_endpoints
 
-# Short descriptions shown before each check's enable prompt.
+# Detailed descriptions shown before each check's enable prompt.  These are
+# written for someone who may not know what each subsystem is or why they'd
+# want to monitor it.
 CHECK_DESCRIPTIONS = {
     "system": (
-        "Monitors disk usage, memory, and CPU. Alerts when resources hit"
-        " warning/critical thresholds."
+        "Checks disk space on every mounted partition, RAM usage, and CPU\n"
+        "  load. You set warning and critical thresholds (e.g. warn at 80%,\n"
+        "  critical at 90%). If any resource crosses a threshold, you get\n"
+        "  an alert with the exact usage and how much headroom is left."
     ),
     "docker": (
-        "Checks that the Docker daemon is healthy and monitors container"
-        " status. Can alert on stopped or unhealthy containers."
+        "Pings the Docker daemon to make sure it's responsive, then lists\n"
+        "  every container and reports its status. 'running' is OK; 'paused'\n"
+        "  or 'restarting' triggers a warning; anything else (exited, dead)\n"
+        "  triggers a critical alert. Useful for catching crashed containers."
     ),
     "http": (
-        "Pings your services over HTTP and alerts if they don't respond or"
-        " return unexpected status codes."
+        "Makes an HTTP request to each URL you configure and checks whether\n"
+        "  it responds within the timeout. A 2xx/3xx status code is OK; a\n"
+        "  4xx/5xx, timeout, or connection refusal triggers a critical alert.\n"
+        "  Use this to verify your web apps, APIs, and dashboards are up."
     ),
     "nginx": (
-        "Verifies Nginx is running, validates config (nginx -t), and checks"
-        " that endpoints are reachable."
+        "Runs three sub-checks: (1) verifies the Nginx process is running\n"
+        "  (via systemctl or pgrep on the host, or container status in Docker),\n"
+        "  (2) runs 'nginx -t' to validate the config has no syntax errors,\n"
+        "  and (3) hits any endpoint URLs you add to confirm they're reachable."
     ),
     "dns": (
-        "Resolves domain names and alerts if DNS lookups start failing."
+        "Does a DNS lookup (getaddrinfo) for each domain you list and alerts\n"
+        "  if resolution fails. Catches DNS server outages, misconfigured\n"
+        "  records, or network issues that prevent name resolution."
     ),
     "ping": (
-        "Sends ICMP pings to hosts and alerts if they stop responding. Good"
-        " for routers, gateways, remote servers."
+        "Sends a single ICMP ping to each host and measures round-trip time.\n"
+        "  Alerts as critical if the host doesn't respond within the timeout.\n"
+        "  Good for monitoring routers, gateways, NAS devices, or any host\n"
+        "  where you just need to know 'is it reachable?'."
     ),
     "network": (
-        "Monitors network interfaces (VPN tunnels, WireGuard, etc.) for link"
-        " state, IP assignment, and activity."
+        "For each network interface you list, checks three things:\n"
+        "  (1) link state — is the interface UP or DOWN?\n"
+        "  (2) IPv4 address — does it have an IP assigned?\n"
+        "  (3) TX bytes — has any traffic been transmitted?\n"
+        "  Useful for VPN tunnels (tun0, wg0), bridges, or secondary NICs\n"
+        "  where you need to know the link is alive and has an address."
     ),
     "home_assistant": (
-        "Checks HA API health, external URL access, and Google Home"
-        " integration if configured."
+        "Checks your Home Assistant instance by hitting the /api/ endpoint.\n"
+        "  Optionally verifies external access (e.g. via Nabu Casa or your\n"
+        "  own domain) and Google Home cloud API connectivity. If you provide\n"
+        "  a long-lived access token, it can do authenticated health checks."
     ),
     "systemd": (
-        "Monitors systemd units and alerts if they stop running. Good for"
-        " services not managed by Docker."
+        "Runs 'systemctl is-active' for each unit you list. Only the 'active'\n"
+        "  state is considered healthy — any other state (inactive, failed,\n"
+        "  activating, deactivating, etc.) triggers an alert. Good for\n"
+        "  services installed via apt/yum that aren't managed by Docker."
     ),
     "process": (
-        "Checks that specific processes are running by name."
+        "Uses 'pgrep -x' (or tasklist on Windows) to check if a process\n"
+        "  with the exact name you specify is running. If no matching process\n"
+        "  is found, it triggers a critical alert. Good for daemons that\n"
+        "  don't have a systemd unit, or scripts you expect to always be up."
     ),
     "updates": (
-        "Checks for pending system package updates (apt/dnf/yum) and reports"
-        " how many are waiting."
+        "Detects your system package manager (apt, dnf, or yum) and counts\n"
+        "  how many updates are pending. You set thresholds — for example,\n"
+        "  warn at 1+ pending update, critical at 50+. Helps you stay on\n"
+        "  top of security patches without manually checking."
     ),
     "command": (
-        "Runs arbitrary shell commands and checks exit codes or output."
-        " Escape hatch for anything else."
+        "Runs any shell command you define and checks the exit code. Exit 0\n"
+        "  means OK; non-zero means failure. You can also require a specific\n"
+        "  string in the output — if it's missing, the check fails. This is\n"
+        "  the escape hatch for monitoring anything labwatch doesn't have a\n"
+        "  dedicated check for."
     ),
 }
 
@@ -85,18 +115,42 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     config = dict(DEFAULT_CONFIG)
 
     # Hostname
+    click.secho("Hostname", bold=True)
+    click.secho(
+        "  This name identifies your server in alerts and reports.\n"
+        "  Use something recognizable — e.g. 'proxmox', 'nas', 'pi-cluster'.",
+        dim=True,
+    )
     default_host = platform.node() or "homelab"
     config["hostname"] = click.prompt("Hostname", default=default_host)
 
     # ntfy configuration
     click.echo()
     click.secho("Notification setup (ntfy)", bold=True)
+    click.secho(
+        "  ntfy (pronounced 'notify') is a simple push notification service.\n"
+        "  When a check fails, labwatch sends an alert to your phone/desktop\n"
+        "  via ntfy. You can self-host ntfy or use the free public server at\n"
+        "  ntfy.sh. Install the ntfy app on your phone to receive alerts.",
+        dim=True,
+    )
     ntfy_enabled = click.confirm("Enable ntfy notifications?", default=True)
     config["notifications"] = {"ntfy": {"enabled": ntfy_enabled}}
 
     if ntfy_enabled:
+        click.secho(
+            "  The server URL is where alerts are sent. Use https://ntfy.sh for\n"
+            "  the free public server, or your own URL if you self-host ntfy.",
+            dim=True,
+        )
         config["notifications"]["ntfy"]["server"] = click.prompt(
             "ntfy server URL", default="https://ntfy.sh"
+        )
+        click.secho(
+            "  The topic is like a channel name. Anyone who subscribes to this\n"
+            "  topic will receive your alerts. Pick something unique to avoid\n"
+            "  collisions on the public server (e.g. 'myname-homelab-alerts').",
+            dim=True,
         )
         config["notifications"]["ntfy"]["topic"] = click.prompt(
             "ntfy topic", default="homelab_alerts"
@@ -110,12 +164,20 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     config["checks"] = {"system": {"enabled": sys_enabled}}
 
     if sys_enabled:
+        click.secho(
+            "  Set thresholds for when to alert. 'Warning' sends a heads-up,\n"
+            "  'critical' means something needs immediate attention.",
+            dim=True,
+        )
         config["checks"]["system"]["thresholds"] = {
             "disk_warning": click.prompt("Disk warning threshold (%)", default=80, type=int),
             "disk_critical": click.prompt("Disk critical threshold (%)", default=90, type=int),
             "memory_warning": click.prompt("Memory warning threshold (%)", default=80, type=int),
             "memory_critical": click.prompt("Memory critical threshold (%)", default=90, type=int),
-            "cpu_load_multiplier": click.prompt("CPU load multiplier", default=2, type=int),
+            "cpu_load_multiplier": click.prompt(
+                "CPU load multiplier (alert when load exceeds CPU count * this value)",
+                default=2, type=int,
+            ),
         }
 
     # Docker checks
@@ -155,10 +217,15 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
                 config["checks"]["http"]["endpoints"] = suggestions
 
     if http_enabled:
+        click.secho(
+            "  You can add any URL you want monitored. labwatch will make an\n"
+            "  HTTP request and alert if it gets no response or a 4xx/5xx error.",
+            dim=True,
+        )
         while click.confirm("Add a custom HTTP endpoint?", default=False):
-            name = click.prompt("  Endpoint name")
-            url = click.prompt("  URL")
-            timeout = click.prompt("  Timeout (seconds)", default=10, type=int)
+            name = click.prompt("  Endpoint name (a label for this check)")
+            url = click.prompt("  URL (e.g. http://localhost:8080/health)")
+            timeout = click.prompt("  Timeout in seconds (how long to wait for a response)", default=10, type=int)
             config["checks"]["http"]["endpoints"].append({
                 "name": name,
                 "url": url,
@@ -173,14 +240,25 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     config["checks"]["nginx"] = {"enabled": nginx_enabled, "container": "", "endpoints": []}
 
     if nginx_enabled:
+        click.secho(
+            "  If Nginx runs in Docker, enter the container name so labwatch\n"
+            "  can check it via the Docker API. Leave empty if Nginx is\n"
+            "  installed directly on the host (systemd/apt/yum).",
+            dim=True,
+        )
         container = click.prompt(
-            "  Nginx Docker container name (empty for systemd/process mode)",
+            "  Nginx Docker container name (empty if installed on host)",
             default="", show_default=False,
         )
         config["checks"]["nginx"]["container"] = container.strip()
 
+        click.secho(
+            "  Optionally add URLs that Nginx serves. labwatch will request\n"
+            "  each one and alert if it's unreachable or returns an error.",
+            dim=True,
+        )
         while click.confirm("  Add an Nginx endpoint URL to monitor?", default=False):
-            url = click.prompt("    URL")
+            url = click.prompt("    URL (e.g. https://mydomain.com)")
             config["checks"]["nginx"]["endpoints"].append(url.strip())
 
     # DNS checks
@@ -191,7 +269,12 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     config["checks"]["dns"] = {"enabled": dns_enabled, "domains": []}
 
     if dns_enabled:
-        click.echo("  Enter domains to monitor (one per prompt).")
+        click.secho(
+            "  Enter domain names to resolve. labwatch will do a DNS lookup\n"
+            "  and alert if resolution fails — useful for catching DNS outages\n"
+            "  or misconfigurations (e.g. google.com, mydomain.com).",
+            dim=True,
+        )
         while True:
             domain = click.prompt(
                 "  Domain (empty to finish)",
@@ -209,7 +292,12 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     config["checks"]["ping"] = {"enabled": ping_enabled, "hosts": [], "timeout": 5}
 
     if ping_enabled:
-        click.echo("  Enter hosts to ping (one per prompt, e.g. 8.8.8.8).")
+        click.secho(
+            "  Enter IP addresses or hostnames to ping. Good for monitoring\n"
+            "  your router (192.168.1.1), a gateway, or a remote server.\n"
+            "  labwatch alerts if any host stops responding.",
+            dim=True,
+        )
         while True:
             host = click.prompt(
                 "  Host (empty to finish)",
@@ -233,19 +321,40 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     }
 
     if ha_enabled:
+        click.secho(
+            "  The local URL is how labwatch reaches HA on your network.\n"
+            "  Usually http://localhost:8123 if HA runs on this machine.",
+            dim=True,
+        )
         config["checks"]["home_assistant"]["url"] = click.prompt(
             "  Local HA URL", default="http://localhost:8123"
+        )
+        click.secho(
+            "  If you access HA remotely (e.g. via Nabu Casa or your own\n"
+            "  domain), enter that URL to also verify external access works.",
+            dim=True,
         )
         ext_url = click.prompt(
             "  External HA URL (empty to skip)",
             default="", show_default=False,
         )
         config["checks"]["home_assistant"]["external_url"] = ext_url.strip()
+        click.secho(
+            "  A long-lived access token lets labwatch call the HA API to\n"
+            "  check deeper health info. Generate one in HA under your\n"
+            "  Profile -> Security -> Long-Lived Access Tokens.",
+            dim=True,
+        )
         token = click.prompt(
             "  Long-lived access token (empty to skip deep checks)",
             default="", show_default=False,
         )
         config["checks"]["home_assistant"]["token"] = token.strip()
+        click.secho(
+            "  If you use Google Home with HA, labwatch can verify that\n"
+            "  the Google Home Cloud API endpoint is reachable.",
+            dim=True,
+        )
         config["checks"]["home_assistant"]["google_home"] = click.confirm(
             "  Check Google Home API connectivity?", default=True,
         )
@@ -258,7 +367,12 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     config["checks"]["systemd"] = {"enabled": systemd_enabled, "units": []}
 
     if systemd_enabled:
-        click.echo("  Enter systemd unit names to monitor (one per prompt).")
+        click.secho(
+            "  Enter the names of systemd services you want monitored.\n"
+            "  Use the unit name as shown by 'systemctl list-units'\n"
+            "  (e.g. 'nginx', 'sshd', 'tailscaled').",
+            dim=True,
+        )
         while True:
             unit = click.prompt(
                 "  Unit name (empty to finish)",
@@ -276,7 +390,12 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     config["checks"]["process"] = {"enabled": process_enabled, "names": []}
 
     if process_enabled:
-        click.echo("  Enter process names to monitor (one per prompt).")
+        click.secho(
+            "  Enter process names as they appear in 'ps' or 'pgrep'.\n"
+            "  labwatch will alert if a process with that name isn't running\n"
+            "  (e.g. 'redis-server', 'mongod', 'node').",
+            dim=True,
+        )
         while True:
             proc = click.prompt(
                 "  Process name (empty to finish)",
@@ -294,7 +413,12 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     config["checks"]["network"] = {"enabled": network_enabled, "interfaces": []}
 
     if network_enabled:
-        click.echo("  Enter interface names to monitor (one per prompt, e.g. tun0, wg0).")
+        click.secho(
+            "  Enter network interface names as shown by 'ip link' or 'ifconfig'.\n"
+            "  Useful for VPN tunnels (tun0, wg0), bridges, or secondary NICs.\n"
+            "  labwatch checks if the interface is UP and has an IP assigned.",
+            dim=True,
+        )
         while True:
             iface = click.prompt(
                 "  Interface name (empty to finish)",
@@ -302,6 +426,10 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
             )
             if not iface.strip():
                 break
+            click.secho(
+                f"  How severe is it if '{iface.strip()}' goes down?",
+                dim=True,
+            )
             sev = click.prompt(
                 f"  Severity for '{iface.strip()}'",
                 type=click.Choice(["critical", "warning"]),
@@ -323,6 +451,12 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     }
 
     if updates_enabled:
+        click.secho(
+            "  Set how many pending updates trigger each severity level.\n"
+            "  For example: warn at 1+ pending, critical at 50+ pending.\n"
+            "  This uses your system package manager (apt, dnf, or yum).",
+            dim=True,
+        )
         config["checks"]["updates"]["warning_threshold"] = click.prompt(
             "  Warning threshold (number of pending updates)", default=1, type=int,
         )
@@ -338,11 +472,17 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     config["checks"]["command"] = {"enabled": command_enabled, "commands": []}
 
     if command_enabled:
+        click.secho(
+            "  Define shell commands that labwatch runs on each check cycle.\n"
+            "  A non-zero exit code means failure. You can also require a\n"
+            "  specific string in the output to consider the check passing.",
+            dim=True,
+        )
         while click.confirm("  Add a command check?", default=True):
-            cmd_name = click.prompt("    Check name")
-            cmd_command = click.prompt("    Command to run")
+            cmd_name = click.prompt("    Check name (a label for this check)")
+            cmd_command = click.prompt("    Shell command to run (e.g. 'curl -sf http://...')")
             cmd_expect = click.prompt(
-                "    Expected output substring (empty to skip)",
+                "    Expected output substring (alert if missing, empty to skip)",
                 default="", show_default=False,
             )
             cmd_severity = click.prompt(
@@ -358,6 +498,12 @@ def run_wizard(config_path: Optional[Path] = None) -> None:
     # Docker auto-updates
     click.echo()
     click.secho("Docker auto-updates", bold=True)
+    click.secho(
+        "  labwatch can automatically pull the latest Docker images and\n"
+        "  restart your Compose services. It runs 'docker compose pull'\n"
+        "  followed by 'docker compose up -d' in each configured directory.",
+        dim=True,
+    )
     update_enabled = click.confirm("Configure Docker Compose auto-updates?", default=False)
     config["update"] = {"compose_dirs": []}
 
@@ -447,12 +593,23 @@ def _scan_base_dir(config: dict, base_dir: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _section_break() -> None:
+    """Print a consistent visual separator between wizard stages."""
+    click.echo()
+    click.secho("=" * 40)
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
 # Post-config summary
 # ---------------------------------------------------------------------------
 
 def _print_summary(config: dict) -> None:
     """Print a recap of what was configured."""
-    click.echo()
+    _section_break()
     click.secho("What you set up", bold=True)
     click.secho("-" * 40)
 
@@ -497,7 +654,7 @@ def _offer_notification_test(config: dict) -> None:
     if not ntfy.get("enabled"):
         return
 
-    click.echo()
+    _section_break()
     click.secho("Test notifications", bold=True)
     click.secho(
         "  Send a test alert to verify your ntfy setup is working.",
@@ -530,26 +687,51 @@ def _offer_notification_test(config: dict) -> None:
 # Scheduling
 # ---------------------------------------------------------------------------
 
-# Checks grouped by recommended frequency. Each check belongs to exactly one
-# tier.  When building the schedule, only tiers with at least one enabled
-# check are shown to the user.
+# Checks grouped by recommended frequency.  Only tiers with at least one
+# enabled check are shown to the user.
+#
+# Each tuple: (default_interval, human_label, check_names, frequency_choices)
 #
 # Rationale:
 #   fast  (1m)  - link-state changes are time-sensitive
 #   med   (5m)  - service reachability; you want to know quickly
 #   slow  (30m) - resource usage / daemon state; less volatile
 #   daily (1d)  - package updates; no rush
-SCHEDULE_TIERS: List[Tuple[str, str, List[str]]] = [
-    ("1m",  "every minute",  ["network"]),
-    ("5m",  "every 5 min",   ["http", "dns", "ping", "nginx"]),
-    ("30m", "every 30 min",  ["system", "docker", "home_assistant", "systemd", "process", "command"]),
-    ("1d",  "daily",         ["updates"]),
+SCHEDULE_TIERS: List[Tuple[str, str, List[str], List[Tuple[str, str]]]] = [
+    ("1m", "every minute", ["network"], [
+        ("1m", "Every minute (recommended)"),
+        ("5m", "Every 5 minutes"),
+        ("15m", "Every 15 minutes"),
+        ("30m", "Every 30 minutes"),
+    ]),
+    ("5m", "every 5 min", ["http", "dns", "ping", "nginx"], [
+        ("5m", "Every 5 minutes (recommended)"),
+        ("15m", "Every 15 minutes"),
+        ("30m", "Every 30 minutes"),
+        ("1h", "Hourly"),
+    ]),
+    ("30m", "every 30 min", ["system", "docker", "home_assistant", "systemd", "process", "command"], [
+        ("30m", "Every 30 minutes (recommended)"),
+        ("1h", "Hourly"),
+        ("4h", "Every 4 hours"),
+        ("1d", "Daily"),
+    ]),
+    ("1d", "daily", ["updates"], [
+        ("1d", "Daily (recommended)"),
+        ("1w", "Weekly"),
+    ]),
+]
+
+# Frequency choices for auto-updates
+_UPDATE_CHOICES: List[Tuple[str, str]] = [
+    ("1d", "Daily (recommended)"),
+    ("1w", "Weekly"),
 ]
 
 
 def _offer_scheduling(config: dict) -> None:
     """Explain the execution model and offer to install cron entries."""
-    click.echo()
+    _section_break()
     click.secho("Scheduling", bold=True)
     click.echo(
         "  labwatch is not a daemon — it runs once and exits.\n"
@@ -564,22 +746,23 @@ def _offer_scheduling(config: dict) -> None:
     checks = config.get("checks", {})
     compose_dirs = config.get("update", {}).get("compose_dirs", [])
 
-    schedule: List[Tuple[str, str, List[str]]] = []  # (interval, label, modules)
-    for interval, label, tier_checks in SCHEDULE_TIERS:
+    # (interval, label, modules, choices) — only tiers with enabled checks
+    active_tiers: List[Tuple[str, str, List[str], List[Tuple[str, str]]]] = []
+    for default_interval, label, tier_checks, choices in SCHEDULE_TIERS:
         enabled_in_tier = [c for c in tier_checks if checks.get(c, {}).get("enabled")]
         if enabled_in_tier:
-            schedule.append((interval, label, enabled_in_tier))
+            active_tiers.append((default_interval, label, enabled_in_tier, choices))
 
-    if not schedule and not compose_dirs:
+    if not active_tiers and not compose_dirs:
         click.echo()
         click.echo("  No checks enabled — nothing to schedule.")
-        _print_manual_next_steps()
+        _print_done()
         return
 
     # Show recommended schedule
     click.echo()
     click.secho("  Recommended schedule:", bold=True)
-    for interval, label, modules in schedule:
+    for interval, label, modules, _choices in active_tiers:
         click.echo(f"    {label:14s}  labwatch check --only {','.join(modules)}")
     if compose_dirs:
         click.echo(f"    {'daily':14s}  labwatch update")
@@ -589,50 +772,97 @@ def _offer_scheduling(config: dict) -> None:
         click.echo()
         click.echo("  Windows detected — cron is not available.")
         click.echo("  Use Task Scheduler to run these commands on an interval.")
-        _print_manual_next_steps()
+        _print_done()
         return
 
+    # Three-way choice: accept / customize / none
     click.echo()
-    if not click.confirm("Install this cron schedule now?", default=True):
+    choice = click.prompt(
+        "  Schedule checks",
+        type=click.Choice(["A", "C", "N"], case_sensitive=False),
+        default="A",
+        show_choices=False,
+        prompt_suffix="? [A]ccept recommended / [C]ustomize / [N]one: ",
+    ).upper()
+
+    if choice == "N":
         click.echo()
-        click.echo("  You can set it up later with:")
-        for interval, _label, modules in schedule:
+        click.echo("  Skipped. You can set it up later with:")
+        for interval, _label, modules, _choices in active_tiers:
             click.echo(f"    labwatch schedule check --every {interval} --only {','.join(modules)}")
         if compose_dirs:
             click.echo(f"    labwatch schedule update --every 1d")
         click.echo(f"    labwatch schedule list    # see what's installed")
-        _print_manual_next_steps()
+        _print_done()
         return
 
+    # Build final schedule — either recommended defaults or customized
+    # schedule_plan: list of (interval, modules_list)
+    schedule_plan: List[Tuple[str, List[str]]] = []
+    update_interval = "1d"
+
+    if choice == "C":
+        click.echo()
+        for default_interval, _label, modules, choices in active_tiers:
+            modules_str = ", ".join(modules)
+            click.echo(f"  {modules_str}:")
+            for i, (intv, desc) in enumerate(choices, 1):
+                click.echo(f"    [{i}] {desc}")
+            idx = click.prompt(
+                "    Choice",
+                type=click.IntRange(1, len(choices)),
+                default=1,
+            )
+            selected_interval = choices[idx - 1][0]
+            schedule_plan.append((selected_interval, modules))
+
+        if compose_dirs:
+            click.echo(f"  Auto-updates:")
+            for i, (intv, desc) in enumerate(_UPDATE_CHOICES, 1):
+                click.echo(f"    [{i}] {desc}")
+            idx = click.prompt(
+                "    Choice",
+                type=click.IntRange(1, len(_UPDATE_CHOICES)),
+                default=1,
+            )
+            update_interval = _UPDATE_CHOICES[idx - 1][0]
+    else:
+        # Accept recommended
+        for default_interval, _label, modules, _choices in active_tiers:
+            schedule_plan.append((default_interval, modules))
+
     # Install cron entries
+    click.echo()
     try:
         from labwatch import scheduler
 
-        for interval, _label, modules in schedule:
+        for interval, modules in schedule_plan:
             line = scheduler.add_entry("check", interval, modules=modules)
             click.secho(f"  Installed: {line}", fg="green")
 
         if compose_dirs:
-            line = scheduler.add_entry("update", "1d")
+            line = scheduler.add_entry("update", update_interval)
             click.secho(f"  Installed: {line}", fg="green")
 
         click.echo()
-        click.secho("Scheduling complete.", fg="green", bold=True)
+        click.secho("Cron schedule installed.", fg="green", bold=True)
         click.echo("  labwatch schedule list     # view installed entries")
         click.echo("  labwatch schedule remove   # uninstall everything")
     except Exception as e:
         click.secho(f"  Failed to install cron entries: {e}", fg="red")
         click.echo("  You can install them manually:")
-        for interval, _label, modules in schedule:
+        for interval, modules in schedule_plan:
             click.echo(f"    labwatch schedule check --every {interval} --only {','.join(modules)}")
         if compose_dirs:
-            click.echo(f"    labwatch schedule update --every 1d")
+            click.echo(f"    labwatch schedule update --every {update_interval}")
 
-    _print_manual_next_steps()
+    _print_done()
 
 
-def _print_manual_next_steps() -> None:
-    """Print final guidance."""
+def _print_done() -> None:
+    """Print the final completion block."""
+    _section_break()
+    click.secho("Setup complete!", fg="green", bold=True)
     click.echo()
     click.secho("Useful commands", bold=True)
     click.echo("  labwatch check               # run all checks once")

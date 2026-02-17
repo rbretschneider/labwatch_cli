@@ -9,21 +9,22 @@ from typing import List, Optional
 # Marker suffix used to identify labwatch-managed cron entries
 MARKER_PREFIX = "# labwatch:"
 
-_INTERVAL_RE = re.compile(r"^(\d+)([mhd])$")
+_INTERVAL_RE = re.compile(r"^(\d+)([mhdw])$")
 
 
 def parse_interval(interval: str) -> str:
-    """Convert a human interval like '5m', '4h', '1d' to a cron expression.
+    """Convert a human interval like '5m', '4h', '1d', '1w' to a cron expression.
 
     Supported formats:
       5m  → */5 * * * *
       4h  → 0 */4 * * *
       1d  → 0 0 * * *
+      1w  → 0 0 * * 0   (weekly, Sunday at midnight)
     """
     match = _INTERVAL_RE.match(interval.strip())
     if not match:
         raise ValueError(
-            f"Invalid interval '{interval}'. Use format like 5m, 4h, 1d."
+            f"Invalid interval '{interval}'. Use format like 5m, 4h, 1d, 1w."
         )
 
     value = int(match.group(1))
@@ -41,6 +42,10 @@ def parse_interval(interval: str) -> str:
         if value != 1:
             raise ValueError("Day interval only supports 1d (daily at midnight)")
         return "0 0 * * *"
+    elif unit == "w":
+        if value != 1:
+            raise ValueError("Week interval only supports 1w (weekly on Sunday)")
+        return "0 0 * * 0"
 
     raise ValueError(f"Unknown unit '{unit}'")
 

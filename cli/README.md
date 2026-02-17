@@ -1,6 +1,6 @@
 # labwatch
 
-General-purpose homelab monitoring CLI. Checks system resources, Docker containers, and HTTP endpoints, with push notifications via [ntfy](https://ntfy.sh).
+General-purpose homelab monitoring CLI. Checks system resources, Docker containers, HTTP endpoints, Nginx, DNS, systemd units, network interfaces, processes, package updates, and more — with push notifications via [ntfy](https://ntfy.sh) and built-in cron scheduling.
 
 ## Install
 
@@ -18,23 +18,25 @@ cd labwatch_cli/cli
 pip install .
 ```
 
-For development (editable install):
+For development (editable install with test deps):
 
 ```bash
-pip install -e .
+pip install -e ".[test]"
 ```
 
 ## Quick Start
 
 ```bash
-# Interactive setup — generates ~/.config/labwatch/config.yaml
+# Interactive setup — walks you through every check with descriptions,
+# auto-detects Docker Compose projects, tests notifications, and sets
+# up your cron schedule.
 labwatch init
 
-# Run all enabled checks
+# Run all enabled checks once
 labwatch check
 
-# Run only system checks (disk, memory, CPU)
-labwatch check --only system
+# Run specific check modules
+labwatch check --only system,docker
 
 # See what Docker containers are running
 labwatch discover
@@ -43,68 +45,79 @@ labwatch discover
 labwatch notify "Test" "Hello from labwatch"
 ```
 
+The `labwatch init` wizard handles everything: config generation, notification testing, and cron scheduling. After running it, your checks are already running on a schedule.
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `labwatch init` | Interactive wizard to generate config |
+| `labwatch init` | Interactive wizard — config, notifications, scheduling |
 | `labwatch check` | Run all enabled checks, notify on failures |
 | `labwatch check --only system,docker` | Run specific check modules |
 | `labwatch check --json` | JSON output for scripting/cron |
 | `labwatch discover` | List Docker containers, suggest endpoints |
+| `labwatch update` | Pull latest Docker images, restart changed services |
+| `labwatch update --dry-run` | Preview what would be updated |
+| `labwatch update --force` | Update even version-pinned tags |
 | `labwatch notify "Title" "Message"` | Send a one-off notification |
 | `labwatch config` | Show current config summary |
 | `labwatch config --validate` | Validate config file |
+| `labwatch schedule check --every 5m` | Schedule checks to cron |
+| `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
+| `labwatch schedule update --every 1d` | Schedule Docker Compose updates |
+| `labwatch schedule list` | Show all labwatch cron entries |
+| `labwatch schedule remove` | Remove labwatch cron entries |
+| `labwatch summarize` | Plain-English overview of what's configured |
+| `labwatch motd` | Plain-text login summary for SSH MOTD |
 | `labwatch version` | Show version |
 
 Global options: `--config PATH`, `--no-color`, `--verbose`
 
+## What It Monitors
+
+| Module | What it checks |
+|--------|---------------|
+| **system** | Disk usage per partition, RAM, CPU load with configurable thresholds |
+| **docker** | Daemon health, container status (running/paused/exited/dead) |
+| **http** | HTTP endpoint availability and response codes |
+| **nginx** | Service status, `nginx -t` config validation, endpoint reachability |
+| **systemd** | `systemctl is-active` per unit — only "active" is healthy |
+| **dns** | Domain name resolution via `getaddrinfo` |
+| **ping** | ICMP reachability with round-trip time |
+| **network** | Per-interface: link state, IPv4 address, TX bytes (VPNs, WireGuard) |
+| **process** | Verify processes running by exact name (`pgrep -x`) |
+| **home_assistant** | API health, external URL, Google Home cloud, authenticated checks |
+| **updates** | Pending package updates (apt/dnf/yum) with threshold alerts |
+| **command** | Run shell commands, check exit codes and output patterns |
+
 ## Configuration
 
-Config lives at `~/.config/labwatch/config.yaml` (Linux/macOS) or `%APPDATA%\labwatch\config.yaml` (Windows). Run `labwatch init` to generate it, or create manually:
+Config lives at `~/.config/labwatch/config.yaml` (Linux/macOS) or `%APPDATA%\labwatch\config.yaml` (Windows). Run `labwatch init` to generate it interactively, or create manually.
 
-```yaml
-hostname: "my-server"
+See the [main README](../README.md) for a full config example and detailed documentation.
 
-notifications:
-  ntfy:
-    enabled: true
-    server: "https://ntfy.sh"
-    topic: "homelab_alerts"
+## Scheduling
 
-checks:
-  system:
-    enabled: true
-    thresholds:
-      disk_warning: 80
-      disk_critical: 90
-      memory_warning: 80
-      memory_critical: 90
-      cpu_load_multiplier: 2
-
-  docker:
-    enabled: true
-    watch_stopped: true
-    containers: []          # empty = monitor all containers
-
-  http:
-    enabled: true
-    endpoints:
-      - name: "Home Assistant"
-        url: "http://localhost:8123/api/"
-        timeout: 10
-      - name: "Plex"
-        url: "http://localhost:32400/identity"
-        timeout: 10
-```
-
-## Running on a Schedule
-
-Add to crontab for periodic monitoring:
+labwatch is not a daemon — it runs once and exits. The `labwatch init` wizard sets up cron for you with a recommended schedule (grouped by check frequency), or you can customize intervals per check group. Supported intervals: `1m`–`59m`, `1h`–`23h`, `1d`, `1w`.
 
 ```bash
-# Every 5 minutes
-*/5 * * * * labwatch check 2>&1 | logger -t labwatch
+labwatch schedule check --only network --every 1m
+labwatch schedule check --only http,dns,nginx --every 5m
+labwatch schedule check --only system,docker --every 30m
+labwatch schedule update --every 1w
+labwatch schedule list
 ```
 
-Or with systemd timer, or any scheduler you prefer.
+## Docker Compose Auto-Updates
+
+The wizard auto-detects Compose projects from running containers via Docker labels (`com.docker.compose.project.working_dir`). You can also scan a base directory or add paths manually.
+
+```bash
+labwatch update --dry-run    # preview
+labwatch update              # pull and restart
+labwatch update --force      # include pinned tags
+```
+
+## License
+
+GPL v3. See [LICENSE](../LICENSE) for details.

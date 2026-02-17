@@ -9,24 +9,25 @@ Homelabs tend to grow into a sprawl of containers, services, and network configs
 - No web UI to host. It writes to stdout and pushes to ntfy.
 - Cron-native. Schedule checks and auto-updates with built-in cron management.
 - Config-driven. One YAML file defines everything to monitor.
+- Guided setup. The `labwatch init` wizard walks you through every option with detailed explanations, tests your notifications, auto-detects Docker Compose projects, and installs your cron schedule.
 - Extensible. Plugin architecture for checks and notification backends.
 
 ## What It Monitors
 
 | Module | What it checks |
 |--------|---------------|
-| **system** | Disk usage, memory, CPU load (per-partition thresholds) |
-| **docker** | Daemon health, container status (running/stopped/unhealthy) |
-| **http** | HTTP endpoint availability and response codes |
-| **nginx** | Service status, config validation (`nginx -t`), endpoint reachability |
-| **systemd** | Unit active state with configurable severity per unit |
-| **dns** | Domain name resolution |
-| **ping** | ICMP reachability to hosts |
-| **network** | Interface link state, IP assignment, TX activity (VPN tunnels, WireGuard, etc.) |
-| **process** | Verify processes are running by name |
-| **home_assistant** | HA API health, external URL, Google Home/OAuth2 integration |
-| **updates** | Pending system package updates (apt, dnf, yum) |
-| **command** | Run arbitrary shell commands, validate exit codes and output patterns |
+| **system** | Disk usage per partition, RAM usage, CPU load. Alerts at configurable warning/critical thresholds. |
+| **docker** | Pings the Docker daemon, reports every container's status. Running = OK, paused/restarting = warning, exited/dead = critical. |
+| **http** | Makes HTTP requests to your URLs. 2xx/3xx = OK, 4xx/5xx/timeout/refused = critical. |
+| **nginx** | Verifies Nginx is running (systemd/pgrep or Docker), validates config with `nginx -t`, checks endpoint URLs. |
+| **systemd** | Runs `systemctl is-active` per unit. Only "active" is healthy — inactive, failed, activating, etc. all trigger alerts. |
+| **dns** | DNS lookups via `getaddrinfo`. Alerts if resolution fails. |
+| **ping** | Single ICMP ping per host with round-trip time. Alerts if unreachable. |
+| **network** | Per-interface: link state (UP/DOWN), IPv4 address assigned, TX bytes transmitted. Good for VPN tunnels and WireGuard. |
+| **process** | `pgrep -x` (or tasklist on Windows) to verify processes are running by exact name. |
+| **home_assistant** | HA `/api/` health, optional external URL check, optional Google Home cloud API, authenticated checks with long-lived token. |
+| **updates** | Counts pending package updates (apt/dnf/yum). Warn at N+ pending, critical at M+. |
+| **command** | Run any shell command. Exit 0 = OK, non-zero = failure. Optional output string matching. |
 
 ## Install
 
@@ -65,6 +66,18 @@ source ~/.bashrc   # or source ~/.zshrc
 
 > **Note:** Cron doesn't load shell aliases. The `labwatch schedule` commands handle this by resolving the full path to the binary.
 
+### Updating
+
+Pull the latest code and reinstall:
+
+```bash
+cd /path/to/labwatch_cli
+git pull
+pip install --upgrade ./cli
+# or if using a venv:
+~/labwatch-venv/bin/pip install --upgrade /path/to/labwatch_cli/cli
+```
+
 ### Alternative: pip install directly from GitHub
 
 If you prefer to install into your system Python or an existing venv:
@@ -86,35 +99,50 @@ pip install -e ".[test]"
 ## Quick Start
 
 ```bash
-# 1. Interactive setup - generates ~/.config/labwatch/config.yaml
+# 1. Interactive setup
+#    Walks you through every check module with detailed descriptions,
+#    auto-detects Docker containers and Compose projects, tests your
+#    notifications, and sets up your cron schedule — all in one command.
 labwatch init
 
-# 2. Run all enabled checks
+# 2. Run all enabled checks (happens automatically once cron is set up)
 labwatch check
 
-# 3. Run only specific check modules
+# 3. Run specific check modules
 labwatch check --only network,dns
-
-# 4. Schedule checks at different intervals
-labwatch schedule check --only network --every 1m
-labwatch schedule check --only docker,system --every 30m
-labwatch schedule check --only http,dns --every 5m
-
-# 5. Schedule Docker Compose image updates daily
-labwatch schedule update --every 1d
 ```
+
+That's it. The wizard handles config generation, notification testing, and cron scheduling. You don't need to manually edit crontab or config files unless you want to.
+
+## The Setup Wizard
+
+`labwatch init` is the primary way to configure labwatch. It walks through every section with explanations written for someone who may not know what each subsystem is:
+
+1. **Hostname** — identifies your server in alerts
+2. **Notifications (ntfy)** — explains what ntfy is, how to set up a server/topic, and what each field means
+3. **Check modules** — each of the 12 check types gets a detailed description of exactly what it monitors, what states trigger alerts, and why you'd want it
+4. **Docker auto-updates** — auto-detects Compose projects from running containers via Docker labels, or scans a base directory for compose files
+5. **Summary** — shows what you enabled/disabled, your notification target, and auto-update directories
+6. **Notification test** — sends a test alert to verify your ntfy setup works before you rely on it
+7. **Scheduling** — explains that labwatch is not a daemon and needs cron, shows a recommended schedule grouped by frequency, and offers three options:
+   - **Accept** the recommended schedule (installs cron entries immediately)
+   - **Customize** per check group (choose from sensible frequency options like every 5 min, hourly, daily, weekly)
+   - **None** (skip scheduling, print the manual commands for later)
+
+You can re-run `labwatch init` at any time to reconfigure. Use `--config /tmp/test.yaml` to try it without overwriting your real config.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `labwatch init` | Interactive wizard to generate config |
+| `labwatch init` | Interactive wizard — config, notifications, scheduling |
 | `labwatch check` | Run all enabled checks, notify on failures |
 | `labwatch check --only system,docker` | Run specific check modules |
 | `labwatch check --json` | JSON output for scripting |
 | `labwatch discover` | List Docker containers, suggest HTTP endpoints |
 | `labwatch update` | Pull latest Docker images and restart changed services |
 | `labwatch update --dry-run` | Show what would be updated without pulling |
+| `labwatch update --force` | Update even version-pinned tags |
 | `labwatch notify "Title" "Message"` | Send a one-off push notification |
 | `labwatch config` | Show current config summary |
 | `labwatch config --validate` | Validate config file |
@@ -122,10 +150,11 @@ labwatch schedule update --every 1d
 | `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
 | `labwatch schedule update --every 1d` | Add update schedule to cron |
 | `labwatch schedule list` | Show all labwatch cron entries |
-| `labwatch schedule remove` | Remove labwatch cron entries |
+| `labwatch schedule remove` | Remove all labwatch cron entries |
+| `labwatch schedule remove --only check` | Remove only check entries |
+| `labwatch summarize` | Plain-English overview of what's configured |
 | `labwatch motd` | Plain-text login summary for SSH MOTD |
 | `labwatch motd --only updates` | MOTD for specific modules only |
-| `labwatch summarize` | Plain-English overview of what's configured |
 | `labwatch version` | Show version |
 
 **Global options:** `--config PATH`, `--no-color`, `--verbose`
@@ -154,6 +183,7 @@ checks:
       disk_critical: 90
       memory_warning: 80
       memory_critical: 90
+      cpu_load_multiplier: 2
 
   docker:
     enabled: true
@@ -171,7 +201,7 @@ checks:
 
   nginx:
     enabled: true
-    container: "nginx"        # or empty string for host-mode
+    container: ""             # empty = host-mode (systemd/apt)
     endpoints:
       - "https://mydomain.com"
 
@@ -203,6 +233,13 @@ checks:
       - "1.1.1.1"
     timeout: 5
 
+  home_assistant:
+    enabled: false
+    url: "http://localhost:8123"
+    external_url: ""
+    token: ""
+    google_home: true
+
   process:
     enabled: false
     names:
@@ -223,31 +260,31 @@ checks:
 
 update:
   compose_dirs:
-    - "/opt/stacks/media"
-    - "/opt/stacks/monitoring"
+    - "/home/docker/plex"
+    - "/home/docker/grafana"
 ```
 
 ## Scheduling with Cron
 
-labwatch manages its own cron entries so you don't have to edit crontab by hand.
+labwatch is not a daemon — it runs once and exits. To monitor continuously, it needs a cron job. The `labwatch init` wizard can set this up for you, or you can manage it manually with `labwatch schedule`.
 
-Use `--only` to run different check modules at different frequencies. Each `--only` combination gets its own cron entry, so they all coexist:
+labwatch manages its own cron entries so you don't have to edit crontab by hand. Use `--only` to run different check modules at different frequencies. Each `--only` combination gets its own cron entry, so they all coexist:
 
 ```bash
-# VPN and DNS checks every minute
-labwatch schedule check --only network,dns --every 1m
+# Network interface checks every minute (VPN tunnels, WireGuard)
+labwatch schedule check --only network --every 1m
 
-# Docker and system checks every 30 minutes
+# Service reachability every 5 minutes
+labwatch schedule check --only http,dns,ping,nginx --every 5m
+
+# System resources and Docker every 30 minutes
 labwatch schedule check --only docker,system --every 30m
 
-# HTTP endpoints every 5 minutes
-labwatch schedule check --only http --every 5m
+# Package updates daily
+labwatch schedule check --only updates --every 1d
 
-# Or just schedule everything at the same interval
-labwatch schedule check --every 5m
-
-# Docker Compose image updates daily
-labwatch schedule update --every 1d
+# Docker Compose image updates weekly
+labwatch schedule update --every 1w
 
 # See what's scheduled
 labwatch schedule list
@@ -255,15 +292,27 @@ labwatch schedule list
 # Remove all labwatch cron entries
 labwatch schedule remove
 
-# Remove only check entries
+# Remove only check entries (keep update schedule)
 labwatch schedule remove --only check
 ```
 
-Supported intervals: `5m`, `15m`, `30m`, `1h`, `4h`, `12h`, `1d` (or any `Nm`, `Nh`, `Nd` pattern).
+Supported intervals: `1m`–`59m`, `1h`–`23h`, `1d`, `1w`.
+
+> **Windows:** Cron is not available. The wizard will print the equivalent commands for you to set up in Task Scheduler.
 
 ## Docker Compose Auto-Updates
 
 labwatch can pull the latest images for your Docker Compose stacks and restart services when images change.
+
+### Auto-detection
+
+During `labwatch init`, labwatch reads the `com.docker.compose.project.working_dir` label from running containers to automatically find your Compose project directories. You can include all discovered projects or select individually.
+
+If Docker isn't available, you can point labwatch at a base directory (e.g. `/home/docker`) and it will scan subdirectories for compose files (`docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, `compose.yaml`).
+
+You can always add directories manually as well.
+
+### Usage
 
 ```bash
 # Preview what would be updated
@@ -283,7 +332,11 @@ Tag handling:
 
 ## Notifications
 
-labwatch sends alerts via [ntfy](https://ntfy.sh) when checks fail. Severity maps to ntfy priority:
+labwatch sends alerts via [ntfy](https://ntfy.sh) when checks fail. ntfy is a simple push notification service — install the ntfy app on your phone, subscribe to your topic, and you'll get alerts when something breaks.
+
+You can use the free public server at `ntfy.sh` or self-host your own instance. The `labwatch init` wizard explains all of this and offers to send a test notification during setup.
+
+Severity maps to ntfy priority:
 
 | Severity | ntfy Priority |
 |----------|--------------|
@@ -302,9 +355,15 @@ notifications:
     topic: "homelab_alerts"
 ```
 
+Test your notifications at any time:
+
+```bash
+labwatch notify "Test" "Hello from labwatch"
+```
+
 ## Docker Discovery
 
-`labwatch discover` scans your running Docker containers and suggests HTTP endpoints for 23+ known services (Plex, Grafana, Home Assistant, Portainer, Jellyfin, Sonarr, Radarr, Pi-hole, and more). Useful when you're setting up your config for the first time.
+`labwatch discover` scans your running Docker containers and suggests HTTP endpoints for 23+ known services (Plex, Grafana, Home Assistant, Portainer, Jellyfin, Sonarr, Radarr, Pi-hole, and more). The `labwatch init` wizard uses this automatically when configuring HTTP checks.
 
 ```bash
 labwatch discover
@@ -341,11 +400,12 @@ The output is plain text with no colors or Rich formatting, so it works in any t
 ## Project Goals
 
 - Simple to install and run. `pip install` and `labwatch init`, nothing else required.
+- Guided setup. The wizard explains everything and handles config, notification testing, and scheduling in one pass.
 - Cron-first scheduling. Manage monitoring schedules without external tools.
 - Cover the common homelab stack: system resources, Docker, systemd, VPNs, Nginx, DNS, HTTP endpoints.
 - Granular scheduling. Different check modules can run at different intervals (VPN every minute, Docker every 30 minutes, etc.).
 - Separate concerns. System updates, Docker image updates, and monitoring checks all run on independent schedules.
-- Automate Docker Compose image updates on a schedule.
+- Automate Docker Compose image updates with auto-detection of Compose projects.
 - Push notifications via ntfy when things break.
 - Extensible. Add custom checks via the command module or write new check plugins.
 - Scriptable. JSON output for integration with other tools.

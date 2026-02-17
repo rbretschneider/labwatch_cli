@@ -110,12 +110,26 @@ class NginxCheck(BaseCheck):
                 exit_code, output = ctr.exec_run("nginx -t")
                 raw = output.decode(errors="replace")
             else:
-                result = subprocess.run(
-                    ["nginx", "-t"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                exit_code = result.returncode
-                raw = result.stderr + result.stdout
+                # nginx -t often needs root to access /etc/nginx and its
+                # temp/log directories.  Try sudo first, fall back to plain.
+                for cmd in (["sudo", "-n", "nginx", "-t"], ["nginx", "-t"]):
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True, text=True, timeout=10,
+                        )
+                        exit_code = result.returncode
+                        raw = result.stderr + result.stdout
+                        # If sudo isn't available or denied, the exit code
+                        # will be non-zero and raw will mention sudo/password;
+                        # in that case try the next command.
+                        if exit_code == 0 or "successful" in raw.lower():
+                            break
+                        if "sudo" in raw.lower() and "password" in raw.lower():
+                            continue
+                        break  # genuine nginx failure, don't retry
+                    except FileNotFoundError:
+                        continue  # sudo not installed, try plain nginx
 
             if exit_code == 0 or "successful" in raw.lower():
                 return CheckResult(

@@ -29,7 +29,8 @@ IP_LINK_DOWN = """\
     link/none"""
 
 IP_ADDR_WITH_IP = """\
-3: tun0    inet 10.8.0.2/24 brd 10.8.0.255 scope global tun0
+3: tun0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP group default qlen 500
+    inet 10.8.0.2/24 brd 10.8.0.255 scope global tun0
        valid_lft forever preferred_lft forever"""
 
 IP_ADDR_NO_IP = ""
