@@ -1,6 +1,6 @@
 """Docker auto-discovery and HTTP endpoint suggestions."""
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 # Well-known container images and their typical HTTP ports/paths
 KNOWN_SERVICES: Dict[str, Dict] = {
@@ -21,6 +21,33 @@ KNOWN_SERVICES: Dict[str, Dict] = {
     "vaultwarden": {"port": 80, "path": "/alive", "name": "Vaultwarden"},
     "uptime-kuma": {"port": 3001, "path": "/", "name": "Uptime Kuma"},
 }
+
+
+def discover_compose_dirs() -> Optional[List[Tuple[str, str]]]:
+    """Discover Docker Compose project directories from running containers.
+
+    Reads the ``com.docker.compose.project.working_dir`` label that Docker
+    Compose sets on every container it manages.
+
+    Returns a deduplicated list of ``(project_name, working_dir)`` tuples
+    sorted by project name, or *None* if Docker is unavailable.
+    """
+    try:
+        import docker
+        client = docker.from_env()
+        client.ping()
+    except Exception:
+        return None
+
+    seen: Dict[str, str] = {}
+    for container in client.containers.list(all=True):
+        labels = container.labels or {}
+        working_dir = labels.get("com.docker.compose.project.working_dir")
+        project = labels.get("com.docker.compose.project")
+        if working_dir and project and project not in seen:
+            seen[project] = working_dir
+
+    return sorted(seen.items(), key=lambda x: x[0])
 
 
 def discover_containers() -> Optional[List[Dict]]:

@@ -23,14 +23,14 @@ General-purpose homelab monitoring CLI. Checks system resources, Docker containe
 Requires Python 3.8+.
 
 ```bash
-pip install git+https://github.com/YourUser/homelab.git#subdirectory=cli
+pip install git+https://github.com/rbretschneider/labwatch_cli.git#subdirectory=cli
 ```
 
 Or clone and install locally:
 
 ```bash
-git clone https://github.com/YourUser/homelab.git
-cd homelab/cli
+git clone https://github.com/rbretschneider/labwatch_cli.git
+cd labwatch_cli/cli
 pip install .
 ```
 
