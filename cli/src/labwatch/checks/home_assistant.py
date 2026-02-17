@@ -20,7 +20,7 @@ class HomeAssistantCheck(BaseCheck):
 
         results = []
 
-        results.append(self._check_api(url))
+        results.append(self._check_api(url, has_token=bool(token)))
 
         if external_url:
             results.append(self._check_external(external_url))
@@ -33,7 +33,7 @@ class HomeAssistantCheck(BaseCheck):
 
         return results
 
-    def _check_api(self, url: str) -> CheckResult:
+    def _check_api(self, url: str, has_token: bool = False) -> CheckResult:
         try:
             resp = requests.get(f"{url}/api/", timeout=10)
             if resp.status_code < 400:
@@ -41,6 +41,12 @@ class HomeAssistantCheck(BaseCheck):
                     name="ha:api",
                     severity=Severity.OK,
                     message=f"HA API responding (HTTP {resp.status_code})",
+                )
+            if resp.status_code == 401 and not has_token:
+                return CheckResult(
+                    name="ha:api",
+                    severity=Severity.OK,
+                    message="HA API reachable (auth required, no token configured)",
                 )
             return CheckResult(
                 name="ha:api",
