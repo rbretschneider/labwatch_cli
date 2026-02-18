@@ -91,7 +91,101 @@ CHECK_DESCRIPTIONS = {
         "  the escape hatch for monitoring anything labwatch doesn't have a\n"
         "  dedicated check for."
     ),
+    "smart": (
+        "Monitors disk health using S.M.A.R.T. data from HDDs, SSDs, and\n"
+        "  NVMe drives via smartctl. On Raspberry Pi, reads SD/eMMC wear\n"
+        "  levels from sysfs. Alerts on failing health, high temperatures,\n"
+        "  excessive wear, or reallocated sectors."
+    ),
 }
+
+# ---------------------------------------------------------------------------
+# Module selection menu — defines all selectable modules for the checkbox
+# prompt.  Each entry maps a key to its menu label, short description,
+# default enabled state, wizard detail function, and the config path used
+# to check current enabled state.
+# ---------------------------------------------------------------------------
+
+# Forward-declared — actual functions are defined below.  The list is
+# populated after all _section_* functions exist.
+MODULES: List[Dict[str, Any]] = []  # filled at module level below
+
+
+def _module_selection_menu(config: dict) -> List[str]:
+    """Show a questionary checkbox menu and return selected module keys.
+
+    On re-runs, defaults reflect the currently-enabled modules.  Falls back
+    to plain click prompts if questionary is unavailable (e.g. non-TTY).
+    """
+    try:
+        import questionary
+    except ImportError:
+        # Fallback: ask per-module (old behavior)
+        return _module_selection_fallback(config)
+
+    choices = []
+    for mod in MODULES:
+        key = mod["key"]
+        label = mod["label"]
+        desc = mod["short_desc"]
+
+        # Determine current enabled state from config
+        if key == "autoupdate":
+            is_enabled = bool(config.get("update", {}).get("compose_dirs", []))
+        else:
+            is_enabled = config.get("checks", {}).get(key, {}).get("enabled", mod["default_enabled"])
+
+        choices.append(questionary.Choice(
+            title=f"{label} — {desc}",
+            value=key,
+            checked=is_enabled,
+        ))
+
+    click.echo()
+    click.secho("Module selection", bold=True)
+    click.secho(
+        "  Use arrow keys to move, space to toggle, enter to confirm.",
+        dim=True,
+    )
+
+    try:
+        selected = questionary.checkbox(
+            "Select which modules to enable:",
+            choices=choices,
+        ).ask()
+    except (EOFError, KeyboardInterrupt):
+        raise SystemExit(1)
+
+    if selected is None:
+        # User cancelled (Ctrl-C / Ctrl-D handled by questionary)
+        raise SystemExit(1)
+
+    return selected
+
+
+def _module_selection_fallback(config: dict) -> List[str]:
+    """Fallback when questionary is not available: per-module click confirms."""
+    selected = []
+    click.echo()
+    click.secho("Module selection", bold=True)
+    click.secho(
+        "  questionary not available — falling back to per-module prompts.",
+        dim=True,
+    )
+    for mod in MODULES:
+        key = mod["key"]
+        label = mod["label"]
+        desc = mod["short_desc"]
+
+        if key == "autoupdate":
+            is_enabled = bool(config.get("update", {}).get("compose_dirs", []))
+        else:
+            is_enabled = config.get("checks", {}).get(key, {}).get("enabled", mod["default_enabled"])
+
+        if click.confirm(f"  Enable {label} ({desc})?", default=is_enabled):
+            selected.append(key)
+    return selected
+
 
 # Ordered list of wizard section names.
 SECTION_ORDER: List[str] = [
@@ -101,6 +195,7 @@ SECTION_ORDER: List[str] = [
     "docker",
     "http",
     "nginx",
+    "smart",
     "dns",
     "ping",
     "home_assistant",
@@ -144,6 +239,10 @@ def _review_existing_list(
 # ---------------------------------------------------------------------------
 # Per-section functions.  Each mutates *config* in place and reads existing
 # values as defaults so that a re-run shows the previous answers.
+#
+# Module sections accept ``from_menu`` — when True the "Enable X?" prompt
+# is skipped because the user already chose this module in the selection
+# menu.  When False (the default, e.g. via --only) the prompt is shown.
 # ---------------------------------------------------------------------------
 
 def _section_hostname(config: dict) -> None:
@@ -201,16 +300,19 @@ def _section_notifications(config: dict) -> None:
         )
 
 
-def _section_system(config: dict) -> None:
+def _section_system(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("System checks", bold=True)
     _print_description("system")
 
     existing = config.get("checks", {}).get("system", {})
-    sys_enabled = click.confirm(
-        "Enable system checks (disk, memory, CPU)?",
-        default=existing.get("enabled", True),
-    )
+    if from_menu:
+        sys_enabled = True
+    else:
+        sys_enabled = click.confirm(
+            "Enable system checks (disk, memory, CPU)?",
+            default=existing.get("enabled", True),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("system", {})
@@ -251,26 +353,29 @@ def _section_system(config: dict) -> None:
         }
 
 
-def _section_docker(config: dict) -> None:
+def _section_docker(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Docker checks", bold=True)
     _print_description("docker")
 
     existing = config.get("checks", {}).get("docker", {})
 
-    containers = discover_containers()
-    if containers is not None:
-        click.echo(f"Found {len(containers)} Docker container(s).")
-        docker_enabled = click.confirm(
-            "Enable Docker monitoring?",
-            default=existing.get("enabled", True),
-        )
+    if from_menu:
+        docker_enabled = True
     else:
-        click.echo("Docker not available on this system.")
-        docker_enabled = click.confirm(
-            "Enable Docker monitoring anyway (for remote use)?",
-            default=existing.get("enabled", False),
-        )
+        containers = discover_containers()
+        if containers is not None:
+            click.echo(f"Found {len(containers)} Docker container(s).")
+            docker_enabled = click.confirm(
+                "Enable Docker monitoring?",
+                default=existing.get("enabled", True),
+            )
+        else:
+            click.echo("Docker not available on this system.")
+            docker_enabled = click.confirm(
+                "Enable Docker monitoring anyway (for remote use)?",
+                default=existing.get("enabled", False),
+            )
 
     config.setdefault("checks", {})
     config["checks"]["docker"] = {
@@ -280,16 +385,19 @@ def _section_docker(config: dict) -> None:
     }
 
 
-def _section_http(config: dict) -> None:
+def _section_http(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("HTTP endpoint checks", bold=True)
     _print_description("http")
 
     existing = config.get("checks", {}).get("http", {})
-    http_enabled = click.confirm(
-        "Enable HTTP endpoint checks?",
-        default=existing.get("enabled", True),
-    )
+    if from_menu:
+        http_enabled = True
+    else:
+        http_enabled = click.confirm(
+            "Enable HTTP endpoint checks?",
+            default=existing.get("enabled", True),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("http", {})
@@ -338,16 +446,19 @@ def _section_http(config: dict) -> None:
             })
 
 
-def _section_nginx(config: dict) -> None:
+def _section_nginx(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Nginx monitoring", bold=True)
     _print_description("nginx")
 
     existing = config.get("checks", {}).get("nginx", {})
-    nginx_enabled = click.confirm(
-        "Enable Nginx monitoring?",
-        default=existing.get("enabled", False),
-    )
+    if from_menu:
+        nginx_enabled = True
+    else:
+        nginx_enabled = click.confirm(
+            "Enable Nginx monitoring?",
+            default=existing.get("enabled", False),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("nginx", {})
@@ -399,16 +510,83 @@ def _section_nginx(config: dict) -> None:
             config["checks"]["nginx"]["endpoints"].append(url.strip())
 
 
-def _section_dns(config: dict) -> None:
+def _section_smart(config: dict, *, from_menu: bool = False) -> None:
+    click.echo()
+    click.secho("S.M.A.R.T. disk health monitoring", bold=True)
+    _print_description("smart")
+
+    existing = config.get("checks", {}).get("smart", {})
+    if from_menu:
+        smart_enabled = True
+    else:
+        smart_enabled = click.confirm(
+            "Enable S.M.A.R.T. disk health monitoring?",
+            default=existing.get("enabled", False),
+        )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("smart", {})
+    config["checks"]["smart"]["enabled"] = smart_enabled
+    config["checks"]["smart"].setdefault("devices", existing.get("devices", []))
+
+    if smart_enabled:
+        click.secho(
+            "  Set temperature thresholds for drive alerts (in Celsius).",
+            dim=True,
+        )
+        config["checks"]["smart"]["temp_warning"] = click.prompt(
+            "  Temperature warning threshold (C)",
+            default=existing.get("temp_warning", 50), type=int,
+        )
+        config["checks"]["smart"]["temp_critical"] = click.prompt(
+            "  Temperature critical threshold (C)",
+            default=existing.get("temp_critical", 60), type=int,
+        )
+        click.secho(
+            "  Set wear thresholds for SSD/NVMe life percentage used.",
+            dim=True,
+        )
+        config["checks"]["smart"]["wear_warning"] = click.prompt(
+            "  Wear warning threshold (%)",
+            default=existing.get("wear_warning", 80), type=int,
+        )
+        config["checks"]["smart"]["wear_critical"] = click.prompt(
+            "  Wear critical threshold (%)",
+            default=existing.get("wear_critical", 90), type=int,
+        )
+
+        existing_devices = existing.get("devices", [])
+        kept = _review_existing_list(existing_devices, "devices", lambda d: d)
+        config["checks"]["smart"]["devices"] = kept
+
+        click.secho(
+            "  Leave devices empty to auto-detect all drives. Or add specific\n"
+            "  device paths (e.g. /dev/sda, /dev/nvme0).",
+            dim=True,
+        )
+        while True:
+            dev = click.prompt(
+                "  Device path (empty to finish)",
+                default="", show_default=False,
+            )
+            if not dev.strip():
+                break
+            config["checks"]["smart"]["devices"].append(dev.strip())
+
+
+def _section_dns(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("DNS resolution monitoring", bold=True)
     _print_description("dns")
 
     existing = config.get("checks", {}).get("dns", {})
-    dns_enabled = click.confirm(
-        "Enable DNS resolution monitoring?",
-        default=existing.get("enabled", False),
-    )
+    if from_menu:
+        dns_enabled = True
+    else:
+        dns_enabled = click.confirm(
+            "Enable DNS resolution monitoring?",
+            default=existing.get("enabled", False),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("dns", {})
@@ -435,16 +613,19 @@ def _section_dns(config: dict) -> None:
             config["checks"]["dns"]["domains"].append(domain.strip())
 
 
-def _section_ping(config: dict) -> None:
+def _section_ping(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Ping/connectivity monitoring", bold=True)
     _print_description("ping")
 
     existing = config.get("checks", {}).get("ping", {})
-    ping_enabled = click.confirm(
-        "Enable ping/connectivity monitoring?",
-        default=existing.get("enabled", False),
-    )
+    if from_menu:
+        ping_enabled = True
+    else:
+        ping_enabled = click.confirm(
+            "Enable ping/connectivity monitoring?",
+            default=existing.get("enabled", False),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("ping", {})
@@ -472,16 +653,19 @@ def _section_ping(config: dict) -> None:
             config["checks"]["ping"]["hosts"].append(host.strip())
 
 
-def _section_home_assistant(config: dict) -> None:
+def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Home Assistant monitoring", bold=True)
     _print_description("home_assistant")
 
     existing = config.get("checks", {}).get("home_assistant", {})
-    ha_enabled = click.confirm(
-        "Enable Home Assistant monitoring?",
-        default=existing.get("enabled", False),
-    )
+    if from_menu:
+        ha_enabled = True
+    else:
+        ha_enabled = click.confirm(
+            "Enable Home Assistant monitoring?",
+            default=existing.get("enabled", False),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("home_assistant", {})
@@ -534,7 +718,7 @@ def _section_home_assistant(config: dict) -> None:
         )
 
 
-def _section_systemd(config: dict) -> None:
+def _section_systemd(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Systemd unit monitoring", bold=True)
     _print_description("systemd")
@@ -544,7 +728,9 @@ def _section_systemd(config: dict) -> None:
     # Auto-detect systemd availability
     discovered = discover_systemd_units()
 
-    if discovered is None:
+    if from_menu:
+        systemd_enabled = True
+    elif discovered is None:
         click.echo("  systemctl not available on this system.")
         systemd_enabled = click.confirm(
             "Enable systemd monitoring anyway (for remote use)?",
@@ -647,16 +833,19 @@ def _section_systemd(config: dict) -> None:
             config["checks"]["systemd"]["units"].append({"name": name, "severity": sev})
 
 
-def _section_process(config: dict) -> None:
+def _section_process(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Process monitoring", bold=True)
     _print_description("process")
 
     existing = config.get("checks", {}).get("process", {})
-    process_enabled = click.confirm(
-        "Enable process monitoring?",
-        default=existing.get("enabled", False),
-    )
+    if from_menu:
+        process_enabled = True
+    else:
+        process_enabled = click.confirm(
+            "Enable process monitoring?",
+            default=existing.get("enabled", False),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("process", {})
@@ -683,16 +872,19 @@ def _section_process(config: dict) -> None:
             config["checks"]["process"]["names"].append(proc.strip())
 
 
-def _section_network(config: dict) -> None:
+def _section_network(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Network interface monitoring", bold=True)
     _print_description("network")
 
     existing = config.get("checks", {}).get("network", {})
-    network_enabled = click.confirm(
-        "Enable network interface monitoring?",
-        default=existing.get("enabled", False),
-    )
+    if from_menu:
+        network_enabled = True
+    else:
+        network_enabled = click.confirm(
+            "Enable network interface monitoring?",
+            default=existing.get("enabled", False),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("network", {})
@@ -734,16 +926,19 @@ def _section_network(config: dict) -> None:
             )
 
 
-def _section_updates(config: dict) -> None:
+def _section_updates(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Package updates monitoring", bold=True)
     _print_description("updates")
 
     existing = config.get("checks", {}).get("updates", {})
-    updates_enabled = click.confirm(
-        "Enable package updates monitoring?",
-        default=existing.get("enabled", False),
-    )
+    if from_menu:
+        updates_enabled = True
+    else:
+        updates_enabled = click.confirm(
+            "Enable package updates monitoring?",
+            default=existing.get("enabled", False),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("updates", {})
@@ -768,16 +963,19 @@ def _section_updates(config: dict) -> None:
         )
 
 
-def _section_command(config: dict) -> None:
+def _section_command(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Custom command checks", bold=True)
     _print_description("command")
 
     existing = config.get("checks", {}).get("command", {})
-    command_enabled = click.confirm(
-        "Enable custom command checks?",
-        default=existing.get("enabled", False),
-    )
+    if from_menu:
+        command_enabled = True
+    else:
+        command_enabled = click.confirm(
+            "Enable custom command checks?",
+            default=existing.get("enabled", False),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("command", {})
@@ -816,7 +1014,7 @@ def _section_command(config: dict) -> None:
             config["checks"]["command"]["commands"].append(entry)
 
 
-def _section_autoupdate(config: dict) -> None:
+def _section_autoupdate(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Docker auto-updates", bold=True)
     click.secho(
@@ -833,10 +1031,16 @@ def _section_autoupdate(config: dict) -> None:
     config.setdefault("update", {})
     config["update"]["compose_dirs"] = kept
 
-    update_enabled = click.confirm("Configure Docker Compose auto-updates?", default=bool(kept))
+    if from_menu:
+        update_enabled = True
+    else:
+        update_enabled = click.confirm("Configure Docker Compose auto-updates?", default=bool(kept))
 
     if update_enabled:
         _configure_auto_updates(config)
+    elif not from_menu:
+        # Not selected and not from menu — clear dirs
+        pass
 
 
 def _section_scheduling(config: dict) -> None:
@@ -844,13 +1048,14 @@ def _section_scheduling(config: dict) -> None:
 
 
 # Map section names to their functions.
-SECTION_FUNCTIONS: Dict[str, Callable[[dict], None]] = {
+SECTION_FUNCTIONS: Dict[str, Callable] = {
     "hostname": _section_hostname,
     "notifications": _section_notifications,
     "system": _section_system,
     "docker": _section_docker,
     "http": _section_http,
     "nginx": _section_nginx,
+    "smart": _section_smart,
     "dns": _section_dns,
     "ping": _section_ping,
     "home_assistant": _section_home_assistant,
@@ -862,6 +1067,126 @@ SECTION_FUNCTIONS: Dict[str, Callable[[dict], None]] = {
     "autoupdate": _section_autoupdate,
     "scheduling": _section_scheduling,
 }
+
+# ---------------------------------------------------------------------------
+# Populate MODULES list — used by the module selection menu.
+# Order here determines the order in the checkbox list.
+# ---------------------------------------------------------------------------
+
+MODULES.extend([
+    {
+        "key": "system",
+        "label": "System checks",
+        "short_desc": "disk space, memory, CPU load",
+        "default_enabled": True,
+        "wizard_fn": _section_system,
+        "config_path": "checks.system",
+    },
+    {
+        "key": "docker",
+        "label": "Docker",
+        "short_desc": "container status monitoring",
+        "default_enabled": True,
+        "wizard_fn": _section_docker,
+        "config_path": "checks.docker",
+    },
+    {
+        "key": "http",
+        "label": "HTTP endpoints",
+        "short_desc": "URL availability checks",
+        "default_enabled": True,
+        "wizard_fn": _section_http,
+        "config_path": "checks.http",
+    },
+    {
+        "key": "nginx",
+        "label": "Nginx",
+        "short_desc": "process, config test, endpoints",
+        "default_enabled": False,
+        "wizard_fn": _section_nginx,
+        "config_path": "checks.nginx",
+    },
+    {
+        "key": "smart",
+        "label": "S.M.A.R.T.",
+        "short_desc": "disk health monitoring (SSD, HDD, SD cards)",
+        "default_enabled": False,
+        "wizard_fn": _section_smart,
+        "config_path": "checks.smart",
+    },
+    {
+        "key": "dns",
+        "label": "DNS resolution",
+        "short_desc": "domain lookup checks",
+        "default_enabled": False,
+        "wizard_fn": _section_dns,
+        "config_path": "checks.dns",
+    },
+    {
+        "key": "ping",
+        "label": "Ping",
+        "short_desc": "host reachability checks",
+        "default_enabled": False,
+        "wizard_fn": _section_ping,
+        "config_path": "checks.ping",
+    },
+    {
+        "key": "home_assistant",
+        "label": "Home Assistant",
+        "short_desc": "HA instance health monitoring",
+        "default_enabled": False,
+        "wizard_fn": _section_home_assistant,
+        "config_path": "checks.home_assistant",
+    },
+    {
+        "key": "systemd",
+        "label": "Systemd units",
+        "short_desc": "service status monitoring",
+        "default_enabled": False,
+        "wizard_fn": _section_systemd,
+        "config_path": "checks.systemd",
+    },
+    {
+        "key": "process",
+        "label": "Process",
+        "short_desc": "running process checks",
+        "default_enabled": False,
+        "wizard_fn": _section_process,
+        "config_path": "checks.process",
+    },
+    {
+        "key": "network",
+        "label": "Network interfaces",
+        "short_desc": "link state, IP, traffic checks",
+        "default_enabled": False,
+        "wizard_fn": _section_network,
+        "config_path": "checks.network",
+    },
+    {
+        "key": "updates",
+        "label": "Package updates",
+        "short_desc": "pending system updates count",
+        "default_enabled": False,
+        "wizard_fn": _section_updates,
+        "config_path": "checks.updates",
+    },
+    {
+        "key": "command",
+        "label": "Custom commands",
+        "short_desc": "arbitrary shell command checks",
+        "default_enabled": False,
+        "wizard_fn": _section_command,
+        "config_path": "checks.command",
+    },
+    {
+        "key": "autoupdate",
+        "label": "Docker auto-updates",
+        "short_desc": "pull & restart Compose services",
+        "default_enabled": False,
+        "wizard_fn": _section_autoupdate,
+        "config_path": "update.compose_dirs",
+    },
+])
 
 
 # ---------------------------------------------------------------------------
@@ -891,9 +1216,6 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
                 fg="red",
             )
             raise SystemExit(1)
-        sections_to_run = requested
-    else:
-        sections_to_run = list(SECTION_ORDER)
 
     click.echo()
     click.secho("labwatch setup wizard", bold=True)
@@ -918,20 +1240,54 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
 
     click.echo()
 
-    # Run selected sections
-    for section_name in SECTION_ORDER:
-        if section_name not in sections_to_run:
-            continue
-        SECTION_FUNCTIONS[section_name](config)
+    if only is not None:
+        # --only mode: run only the named sections (old behavior)
+        sections_to_run = [s.strip() for s in only.split(",") if s.strip()]
+        for section_name in SECTION_ORDER:
+            if section_name not in sections_to_run:
+                continue
+            SECTION_FUNCTIONS[section_name](config)
 
-    # Save (always — even with --only we write the full config back)
-    if "scheduling" not in sections_to_run:
-        # scheduling section handles its own save+summary flow;
-        # when it's not included we save here.
-        click.echo()
-        saved_path = save_config(config, path)
-        click.secho(f"Config saved to {saved_path}", fg="green", bold=True)
-        _print_summary(config, saved_path)
+        # Save
+        if "scheduling" not in sections_to_run:
+            click.echo()
+            saved_path = save_config(config, path)
+            click.secho(f"Config saved to {saved_path}", fg="green", bold=True)
+            _print_summary(config, saved_path)
+        return
+
+    # --- Full wizard flow with module selection menu ---
+
+    # 1. Hostname
+    _section_hostname(config)
+
+    # 2. Notifications
+    _section_notifications(config)
+
+    # 3. Module selection menu
+    selected_modules = _module_selection_menu(config)
+
+    # All module keys for reference
+    all_module_keys = [mod["key"] for mod in MODULES]
+
+    # 4. Detail configuration for each selected module (in menu order)
+    for mod in MODULES:
+        key = mod["key"]
+        if key in selected_modules:
+            mod["wizard_fn"](config, from_menu=True)
+
+    # 5. Disable unselected modules
+    for key in all_module_keys:
+        if key not in selected_modules:
+            if key == "autoupdate":
+                config.setdefault("update", {})
+                config["update"]["compose_dirs"] = []
+            else:
+                config.setdefault("checks", {}).setdefault(key, {})
+                config["checks"][key]["enabled"] = False
+
+    # 6. Scheduling
+    _section_scheduling(config)
 
 
 def _configure_auto_updates(config: dict) -> None:
@@ -1042,7 +1398,7 @@ def _print_summary(config: dict, config_path: Path) -> None:
     # Enabled/disabled checks
     checks = config.get("checks", {})
     all_check_names = [
-        "system", "docker", "http", "nginx", "dns", "ping",
+        "system", "docker", "http", "nginx", "smart", "dns", "ping",
         "home_assistant", "systemd", "process", "network", "updates", "command",
     ]
     enabled = [n for n in all_check_names if checks.get(n, {}).get("enabled")]
@@ -1112,7 +1468,7 @@ def _offer_notification_test(config: dict) -> None:
 # Rationale:
 #   fast  (1m)  - link-state changes are time-sensitive
 #   med   (5m)  - service reachability; you want to know quickly
-#   slow  (30m) - resource usage / daemon state; less volatile
+#   slow  (30m) - resource usage / daemon state / disk health; less volatile
 #   daily (1d)  - package updates; no rush
 SCHEDULE_TIERS: List[Tuple[str, str, List[str], List[Tuple[str, str]]]] = [
     ("1m", "every minute", ["network"], [
@@ -1127,7 +1483,7 @@ SCHEDULE_TIERS: List[Tuple[str, str, List[str], List[Tuple[str, str]]]] = [
         ("30m", "Every 30 minutes"),
         ("1h", "Hourly"),
     ]),
-    ("30m", "every 30 min", ["system", "docker", "home_assistant", "systemd", "process", "command"], [
+    ("30m", "every 30 min", ["system", "docker", "home_assistant", "systemd", "process", "command", "smart"], [
         ("30m", "Every 30 minutes (recommended)"),
         ("1h", "Hourly"),
         ("4h", "Every 4 hours"),

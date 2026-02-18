@@ -189,10 +189,29 @@ class TestBuildSummaryNetworkCheck:
         assert "(no interfaces configured)" in text
 
 
+class TestBuildSummarySmartCheck:
+    def test_smart_enabled(self, full_cfg):
+        text = "\n".join(_build_summary(full_cfg))
+        assert "S.M.A.R.T. disk health:" in text
+        assert "temp warn 50C/crit 60C" in text
+        assert "wear warn 80%/crit 90%" in text
+        assert "devices: /dev/sda" in text
+
+    def test_smart_auto_detect(self, full_cfg):
+        full_cfg["checks"]["smart"]["devices"] = []
+        text = "\n".join(_build_summary(full_cfg))
+        assert "auto-detect all devices" in text
+
+    def test_smart_disabled(self, default_cfg):
+        text = "\n".join(_build_summary(default_cfg))
+        assert "S.M.A.R.T." not in text.split("Disabled:")[0]
+        assert "S.M.A.R.T." in text.split("Disabled:")[1]
+
+
 class TestBuildSummaryCheckCounts:
     def test_all_enabled_count(self, full_cfg):
         text = "\n".join(_build_summary(full_cfg))
-        assert "12 check groups enabled" in text
+        assert "13 check groups enabled" in text
 
     def test_nothing_enabled(self):
         cfg = {
@@ -213,7 +232,7 @@ class TestBuildSummaryDisabledList:
         # Default config has system, docker, http enabled; rest disabled
         text = "\n".join(_build_summary(default_cfg))
         disabled_section = text.split("Disabled: ")[1]
-        for name in ["Nginx", "DNS", "Ping", "Network", "Home Assistant", "Systemd", "Process", "Command", "Updates"]:
+        for name in ["Nginx", "S.M.A.R.T.", "DNS", "Ping", "Network", "Home Assistant", "Systemd", "Process", "Command", "Updates"]:
             assert name in disabled_section
 
     def test_all_enabled_no_disabled(self, full_cfg):

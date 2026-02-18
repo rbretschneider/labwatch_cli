@@ -30,6 +30,7 @@ def get_check_classes() -> Dict[str, Type["BaseCheck"]]:
     from labwatch.checks import command_check  # noqa: F401
     from labwatch.checks import network_check  # noqa: F401
     from labwatch.checks import updates_check  # noqa: F401
+    from labwatch.checks import smart  # noqa: F401
     return dict(_registry)
 
 

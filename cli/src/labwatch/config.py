@@ -86,6 +86,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "warning_threshold": 1,
             "critical_threshold": 50,
         },
+        "smart": {
+            "enabled": False,
+            "temp_warning": 50,
+            "temp_critical": 60,
+            "wear_warning": 80,
+            "wear_critical": 90,
+            "devices": [],
+        },
     },
     "update": {
         "compose_dirs": [],
@@ -279,6 +287,32 @@ def validate_config(config: Dict[str, Any]) -> list:
             errors.append("updates.critical_threshold must be a non-negative integer")
         if isinstance(warn_t, int) and isinstance(crit_t, int) and warn_t >= crit_t:
             errors.append("updates.warning_threshold must be less than critical_threshold")
+
+    # Validate SMART thresholds
+    smart_cfg = checks.get("smart", {})
+    if smart_cfg.get("enabled"):
+        for key in ("temp_warning", "temp_critical"):
+            val = smart_cfg.get(key)
+            if val is not None and (not isinstance(val, (int, float)) or val < 0):
+                errors.append(f"smart.{key} must be a non-negative number, got {val}")
+        temp_warn = smart_cfg.get("temp_warning", 50)
+        temp_crit = smart_cfg.get("temp_critical", 60)
+        if isinstance(temp_warn, (int, float)) and isinstance(temp_crit, (int, float)):
+            if temp_warn >= temp_crit:
+                errors.append("smart.temp_warning must be less than temp_critical")
+
+        for key in ("wear_warning", "wear_critical"):
+            val = smart_cfg.get(key)
+            if val is not None and not (0 <= val <= 100):
+                errors.append(f"smart.{key} must be 0-100, got {val}")
+        wear_warn = smart_cfg.get("wear_warning", 80)
+        wear_crit = smart_cfg.get("wear_critical", 90)
+        if wear_warn >= wear_crit:
+            errors.append("smart.wear_warning must be less than wear_critical")
+
+        devices = smart_cfg.get("devices", [])
+        if not isinstance(devices, list):
+            errors.append("smart.devices must be a list")
 
     compose_dirs = config.get("update", {}).get("compose_dirs", [])
     if not isinstance(compose_dirs, list):

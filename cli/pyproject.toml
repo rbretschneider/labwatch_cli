@@ -37,6 +37,7 @@ dependencies = [
     "docker>=6.0",
     "requests>=2.28",
     "psutil>=5.9",
+    "questionary>=2.0",
 ]
 
 [project.optional-dependencies]

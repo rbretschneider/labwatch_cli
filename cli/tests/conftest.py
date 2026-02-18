@@ -111,6 +111,14 @@ def full_cfg():
                 "warning_threshold": 1,
                 "critical_threshold": 50,
             },
+            "smart": {
+                "enabled": True,
+                "temp_warning": 50,
+                "temp_critical": 60,
+                "wear_warning": 80,
+                "wear_critical": 90,
+                "devices": ["/dev/sda"],
+            },
         },
         "update": {
             "compose_dirs": ["/opt/stacks/media", "/opt/stacks/monitoring"],

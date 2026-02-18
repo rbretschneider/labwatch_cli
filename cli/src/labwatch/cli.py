@@ -158,7 +158,7 @@ def config_cmd(ctx, do_validate, do_edit):
 
     checks = cfg.get("checks", {})
     check_names = [
-        "system", "docker", "http", "nginx", "dns", "ping",
+        "system", "docker", "http", "nginx", "smart", "dns", "ping",
         "home_assistant", "systemd", "process", "command", "network", "updates",
     ]
     for name in check_names:
@@ -667,6 +667,20 @@ def _build_summary(cfg: dict) -> list:
         ]
         enabled_checks.append(("System updates", parts))
 
+    # S.M.A.R.T.
+    smart_cfg = checks.get("smart", {})
+    if smart_cfg.get("enabled"):
+        parts = [
+            f"temp warn {smart_cfg.get('temp_warning', 50)}C/crit {smart_cfg.get('temp_critical', 60)}C",
+            f"wear warn {smart_cfg.get('wear_warning', 80)}%/crit {smart_cfg.get('wear_critical', 90)}%",
+        ]
+        devices = smart_cfg.get("devices", [])
+        if devices:
+            parts.append(f"devices: {', '.join(devices)}")
+        else:
+            parts.append("auto-detect all devices")
+        enabled_checks.append(("S.M.A.R.T. disk health", parts))
+
     # --- Render ------------------------------------------------------------------
     if enabled_checks:
         lines.append(f"Monitoring ({len(enabled_checks)} check groups enabled):")
@@ -680,7 +694,7 @@ def _build_summary(cfg: dict) -> list:
     # Disabled checks
     all_names = {
         "system": "System", "docker": "Docker", "http": "HTTP",
-        "nginx": "Nginx", "dns": "DNS", "ping": "Ping",
+        "nginx": "Nginx", "smart": "S.M.A.R.T.", "dns": "DNS", "ping": "Ping",
         "network": "Network", "home_assistant": "Home Assistant",
         "systemd": "Systemd", "process": "Process", "command": "Command",
         "updates": "Updates",
@@ -963,6 +977,8 @@ def doctor_cmd(ctx):
         tool_checks.append(("ping", "ping"))
     if checks_cfg.get("network", {}).get("enabled"):
         tool_checks.append(("ip", "network"))
+    if checks_cfg.get("smart", {}).get("enabled"):
+        tool_checks.append(("smartctl", "smart"))
 
     if tool_checks:
         import shutil
