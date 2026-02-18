@@ -1,10 +1,12 @@
 """Orchestrates checks and notifications."""
 
-from typing import List, Optional
+import sys
+from typing import Dict, List, Optional
 
 from labwatch.checks import get_check_classes
-from labwatch.models import CheckReport, Severity
+from labwatch.models import CheckReport, CheckResult, Severity
 from labwatch.notifications import get_notifiers
+from labwatch.state import load_state, save_state
 
 SEVERITY_ORDER = {
     Severity.OK: 0,
@@ -45,7 +47,6 @@ class Runner:
                 results = check.run()
                 report.results.extend(results)
             except Exception as e:
-                from labwatch.models import CheckResult
                 report.results.append(CheckResult(
                     name=name,
                     severity=Severity.UNKNOWN,
@@ -55,7 +56,13 @@ class Runner:
         return report
 
     def notify(self, report: CheckReport) -> None:
-        """Send notifications for a report with failures."""
+        """Send notifications with deduplication and recovery alerts.
+
+        - New failures are reported immediately.
+        - Repeated identical failures are suppressed (no re-alert).
+        - When a previously failing check returns to OK, a recovery
+          notification is sent.
+        """
         notifiers = get_notifiers(self.config)
         if not notifiers:
             return
@@ -69,27 +76,68 @@ class Runner:
         min_sev = SEVERITY_BY_NAME.get(min_sev_name, Severity.WARNING)
         min_order = SEVERITY_ORDER[min_sev]
 
-        # Filter results to those at or above min_severity
-        filtered = [
-            r for r in report.results
-            if SEVERITY_ORDER.get(r.severity, 0) >= min_order
-        ]
+        # Build current state: {check_name: severity_string}
+        current: Dict[str, str] = {}
+        for r in report.results:
+            current[r.name] = r.severity.value
 
-        if not filtered:
-            return
+        # Load previous state
+        prev_state = load_state()
+        prev: Dict[str, str] = prev_state.get("checks", {})
 
-        # Compute worst severity from filtered results
-        worst = max(filtered, key=lambda r: SEVERITY_ORDER.get(r.severity, 0)).severity
+        # Determine what changed
+        new_failures: List[CheckResult] = []
+        recoveries: List[str] = []
 
-        title = f"[{report.hostname}] {worst.value.upper()}"
-        lines = []
-        for r in filtered:
-            lines.append(f"{r.severity.value.upper()}: {r.name} - {r.message}")
+        for r in report.results:
+            order = SEVERITY_ORDER.get(r.severity, 0)
+            prev_sev = prev.get(r.name)
+            prev_order = SEVERITY_ORDER.get(
+                SEVERITY_BY_NAME.get(prev_sev, Severity.OK), 0
+            ) if prev_sev else 0
 
-        message = "\n".join(lines) if lines else "Check report has issues."
+            if order >= min_order:
+                # This is a failure — only notify if it's new or changed
+                if prev_sev != r.severity.value:
+                    new_failures.append(r)
+            elif r.severity == Severity.OK and prev_order >= min_order:
+                # Was failing at/above threshold, now OK — recovery
+                recoveries.append(r.name)
 
+        # Also detect checks that disappeared (removed from config but
+        # were previously failing) — don't alert for those.
+
+        # Send failure notification for new/changed failures
+        if new_failures:
+            worst = max(new_failures, key=lambda r: SEVERITY_ORDER.get(r.severity, 0)).severity
+            title = f"[{report.hostname}] {worst.value.upper()}"
+            lines = [
+                f"{r.severity.value.upper()}: {r.name} - {r.message}"
+                for r in new_failures
+            ]
+            self._send(notifiers, title, "\n".join(lines), worst.value)
+
+        # Send recovery notification
+        if recoveries:
+            title = f"[{report.hostname}] RECOVERED"
+            lines = [f"OK: {name} - recovered" for name in recoveries]
+            self._send(notifiers, title, "\n".join(lines), "ok")
+
+        # Persist current state
+        prev_state["checks"] = current
+        try:
+            save_state(prev_state)
+        except OSError as e:
+            print(f"labwatch: failed to save state: {e}", file=sys.stderr)
+
+    @staticmethod
+    def _send(notifiers, title: str, message: str, severity: str) -> None:
+        """Send a notification through all notifiers."""
         for notifier in notifiers:
             try:
-                notifier.send(title, message, severity=worst.value)
-            except Exception:
-                pass  # Don't crash the run on notification failure
+                notifier.send(title, message, severity=severity)
+            except Exception as e:
+                print(
+                    f"labwatch: notification via {notifier.name} failed: {e}",
+                    file=sys.stderr,
+                )

@@ -1,5 +1,7 @@
-"""Docker auto-discovery and HTTP endpoint suggestions."""
+"""Auto-discovery for Docker containers and systemd services."""
 
+import subprocess
+import sys
 from typing import Dict, List, Optional, Tuple
 
 # Well-known container images and their typical HTTP ports/paths
@@ -93,3 +95,189 @@ def suggest_endpoints(containers: List[Dict]) -> List[Dict]:
                 break
 
     return suggestions
+
+
+# ---------------------------------------------------------------------------
+# Systemd service discovery
+# ---------------------------------------------------------------------------
+
+# Known homelab service patterns: unit name substring -> friendly label.
+# Used to highlight services a homelab user likely cares about.
+KNOWN_SYSTEMD_SERVICES: Dict[str, str] = {
+    # Printing
+    "cups": "CUPS printing",
+    "cupsd": "CUPS printing",
+    # DNS / ad-blocking
+    "pihole-FTL": "Pi-hole FTL",
+    "lighttpd": "lighttpd (Pi-hole web)",
+    "adguardhome": "AdGuard Home",
+    "unbound": "Unbound DNS resolver",
+    "dnsmasq": "dnsmasq DNS",
+    # VPN / networking
+    "wg-quick@": "WireGuard",
+    "wireguard": "WireGuard",
+    "tailscaled": "Tailscale",
+    "openvpn": "OpenVPN",
+    "zerotier": "ZeroTier",
+    # Web / reverse proxy
+    "nginx": "Nginx",
+    "apache2": "Apache",
+    "httpd": "Apache",
+    "traefik": "Traefik",
+    "caddy": "Caddy",
+    "haproxy": "HAProxy",
+    # Media
+    "plexmediaserver": "Plex",
+    "jellyfin": "Jellyfin",
+    "emby": "Emby",
+    "minidlna": "MiniDLNA",
+    # Home automation
+    "homeassistant": "Home Assistant",
+    "home-assistant": "Home Assistant",
+    "mosquitto": "Mosquitto MQTT",
+    "zigbee2mqtt": "Zigbee2MQTT",
+    # File sharing / sync
+    "smbd": "Samba",
+    "nmbd": "Samba NetBIOS",
+    "nfs-server": "NFS server",
+    "syncthing": "Syncthing",
+    "nextcloud": "Nextcloud",
+    # Containers / orchestration
+    "docker": "Docker",
+    "containerd": "containerd",
+    "podman": "Podman",
+    # Databases
+    "postgresql": "PostgreSQL",
+    "mysql": "MySQL",
+    "mariadb": "MariaDB",
+    "redis": "Redis",
+    "mongodb": "MongoDB",
+    "influxdb": "InfluxDB",
+    # Monitoring / logging
+    "grafana-server": "Grafana",
+    "prometheus": "Prometheus",
+    "node_exporter": "Node Exporter",
+    "loki": "Loki",
+    # Download / media management
+    "sonarr": "Sonarr",
+    "radarr": "Radarr",
+    "prowlarr": "Prowlarr",
+    "lidarr": "Lidarr",
+    "transmission": "Transmission",
+    "qbittorrent": "qBittorrent",
+    # Security / auth
+    "vaultwarden": "Vaultwarden",
+    "fail2ban": "Fail2ban",
+    "crowdsec": "CrowdSec",
+    # Core system (things users may still want to monitor)
+    "sshd": "SSH",
+    "ssh": "SSH",
+    "cron": "Cron",
+    "ufw": "UFW firewall",
+    "firewalld": "firewalld",
+}
+
+# Unit prefixes/patterns that are OS plumbing, not user services.
+_SYSTEMD_NOISE_PREFIXES = (
+    "systemd-",
+    "system-",
+    "user@",
+    "user-",
+    "getty@",
+    "serial-getty@",
+    "console-getty",
+    "init",
+    "dbus",
+    "polkit",
+    "accounts-daemon",
+    "networkd-",
+    "resolved",
+    "timesyncd",
+    "logind",
+    "journald",
+    "udevd",
+    "modprobe@",
+    "kmod-",
+    "lvm2-",
+    "dm-event",
+    "multipathd",
+    "blk-availability",
+    "snapd",
+    "packagekit",
+    "switcheroo-",
+    "udisks2",
+    "thermald",
+    "power-profiles",
+    "colord",
+    "avahi-daemon",
+    "wpa_supplicant",
+    "ModemManager",
+    "plymouth-",
+)
+
+
+def discover_systemd_units() -> Optional[List[Dict]]:
+    """Discover running and enabled systemd service units.
+
+    Returns a list of dicts with keys:
+      - ``unit``: unit name (e.g. "cups.service")
+      - ``state``: active/inactive/failed
+      - ``label``: friendly name if recognized, else None
+
+    Returns *None* if systemctl is not available.
+    """
+    if sys.platform == "win32":
+        return None
+
+    try:
+        proc = subprocess.run(
+            ["systemctl", "list-units", "--type=service", "--all",
+             "--no-pager", "--no-legend"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+    if proc.returncode != 0:
+        return None
+
+    units: List[Dict] = []
+    seen = set()
+
+    for line in proc.stdout.strip().splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+
+        unit_name = parts[0].strip()
+        # systemctl can prefix with a bullet character on failed units
+        if unit_name.startswith("\u25cf"):
+            unit_name = parts[1].strip() if len(parts) > 4 else unit_name[1:]
+
+        active_state = parts[2] if len(parts) > 2 else "unknown"
+
+        # Skip noise
+        base = unit_name.replace(".service", "")
+        if any(base.startswith(p) or base == p.rstrip("-") for p in _SYSTEMD_NOISE_PREFIXES):
+            continue
+
+        if unit_name in seen:
+            continue
+        seen.add(unit_name)
+
+        # Try to match a known service
+        label = None
+        for pattern, friendly in KNOWN_SYSTEMD_SERVICES.items():
+            if pattern in base:
+                label = friendly
+                break
+
+        units.append({
+            "unit": unit_name,
+            "state": active_state,
+            "label": label,
+        })
+
+    # Sort: known/labeled services first, then alphabetical
+    units.sort(key=lambda u: (u["label"] is None, u["unit"]))
+    return units

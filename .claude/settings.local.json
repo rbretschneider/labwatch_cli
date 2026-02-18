@@ -18,7 +18,8 @@
       "Bash(py -m labwatch config:*)",
       "Bash(python3 -m pytest:*)",
       "Bash(find:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "WebFetch(domain:pypi.org)"
     ]
   }
 }

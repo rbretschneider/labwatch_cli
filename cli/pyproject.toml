@@ -1,14 +1,35 @@
 [build-system]
-requires = ["setuptools>=64", "setuptools-scm"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "labwatch"
-version = "0.1.0"
-description = "General-purpose homelab monitoring CLI"
+dynamic = ["version"]
+description = "Homelab monitoring CLI — system resources, Docker, systemd, HTTP, DNS, VPNs, and more with push notifications via ntfy"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "MIT"}
+license = "GPL-3.0-or-later"
+authors = [
+    {name = "Ryan Bretschneider"},
+]
+keywords = ["homelab", "monitoring", "cli", "docker", "systemd", "ntfy", "devops"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
@@ -21,8 +42,16 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
 
+[project.urls]
+Homepage = "https://github.com/rbretschneider/labwatch_cli"
+Repository = "https://github.com/rbretschneider/labwatch_cli"
+Issues = "https://github.com/rbretschneider/labwatch_cli/issues"
+
 [project.scripts]
 labwatch = "labwatch.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "labwatch.__version__"}

@@ -8,7 +8,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import click
 
 from labwatch.config import DEFAULT_CONFIG, default_config_path, load_config, save_config, deep_merge
-from labwatch.discovery import discover_compose_dirs, discover_containers, suggest_endpoints
+from labwatch.discovery import (
+    discover_compose_dirs, discover_containers, discover_systemd_units,
+    suggest_endpoints,
+)
 
 # Detailed descriptions shown before each check's enable prompt.  These are
 # written for someone who may not know what each subsystem is or why they'd
@@ -537,10 +540,25 @@ def _section_systemd(config: dict) -> None:
     _print_description("systemd")
 
     existing = config.get("checks", {}).get("systemd", {})
-    systemd_enabled = click.confirm(
-        "Enable systemd unit monitoring?",
-        default=existing.get("enabled", False),
-    )
+
+    # Auto-detect systemd availability
+    discovered = discover_systemd_units()
+
+    if discovered is None:
+        click.echo("  systemctl not available on this system.")
+        systemd_enabled = click.confirm(
+            "Enable systemd monitoring anyway (for remote use)?",
+            default=existing.get("enabled", False),
+        )
+    else:
+        known = [u for u in discovered if u["label"]]
+        running = [u for u in discovered if u["state"] == "active"]
+        click.echo(f"  Found {len(running)} running service(s)"
+                    f" ({len(known)} recognized homelab service(s)).")
+        systemd_enabled = click.confirm(
+            "Enable systemd unit monitoring?",
+            default=existing.get("enabled", bool(known)) or existing.get("enabled", False),
+        )
 
     config.setdefault("checks", {})
     config["checks"].setdefault("systemd", {})
@@ -554,21 +572,79 @@ def _section_systemd(config: dict) -> None:
     )
     config["checks"]["systemd"]["units"] = kept
 
-    if systemd_enabled:
-        click.secho(
-            "  Enter the names of systemd services you want monitored.\n"
-            "  Use the unit name as shown by 'systemctl list-units'\n"
-            "  (e.g. 'nginx', 'sshd', 'tailscaled').",
-            dim=True,
+    if not systemd_enabled:
+        return
+
+    # Build the set of already-configured unit names
+    already = set()
+    for u in config["checks"]["systemd"]["units"]:
+        already.add(u if isinstance(u, str) else u.get("name", ""))
+
+    # --- Auto-discovered services ---
+    if discovered:
+        # Show recognized homelab services first (these are the ones users
+        # most likely want), then other active services.
+        known_active = [u for u in discovered
+                        if u["label"] and u["state"] == "active"
+                        and u["unit"].replace(".service", "") not in already]
+        if known_active:
+            click.echo()
+            click.secho("  Detected homelab services:", bold=True)
+            for i, u in enumerate(known_active, 1):
+                base = u["unit"].replace(".service", "")
+                click.echo(f"    {i}. {base} — {u['label']}")
+
+            if click.confirm("  Add all detected services?", default=True):
+                for u in known_active:
+                    base = u["unit"].replace(".service", "")
+                    already.add(base)
+                    config["checks"]["systemd"]["units"].append(base)
+            elif click.confirm("  Pick individually?", default=True):
+                for u in known_active:
+                    base = u["unit"].replace(".service", "")
+                    if click.confirm(f"    Monitor {base} ({u['label']})?", default=True):
+                        already.add(base)
+                        config["checks"]["systemd"]["units"].append(base)
+
+        # Offer other running (non-known) services
+        other_active = [u for u in discovered
+                        if u["label"] is None and u["state"] == "active"
+                        and u["unit"].replace(".service", "") not in already]
+        if other_active and click.confirm(
+            f"\n  {len(other_active)} other running service(s) found. Browse them?",
+            default=False,
+        ):
+            for u in other_active:
+                base = u["unit"].replace(".service", "")
+                if click.confirm(f"    Monitor {base}?", default=False):
+                    already.add(base)
+                    config["checks"]["systemd"]["units"].append(base)
+
+    # --- Manual additions ---
+    click.secho(
+        "\n  You can also add units manually by name.\n"
+        "  Use the unit name as shown by 'systemctl list-units'\n"
+        "  (e.g. 'my-custom-app', 'wg-quick@wg0').",
+        dim=True,
+    )
+    while True:
+        unit = click.prompt(
+            "  Unit name (empty to finish)",
+            default="", show_default=False,
         )
-        while True:
-            unit = click.prompt(
-                "  Unit name (empty to finish)",
-                default="", show_default=False,
-            )
-            if not unit.strip():
-                break
-            config["checks"]["systemd"]["units"].append(unit.strip())
+        if not unit.strip():
+            break
+        name = unit.strip()
+        sev = click.prompt(
+            f"    Severity if '{name}' is down",
+            type=click.Choice(["critical", "warning"]),
+            default="critical",
+        )
+        already.add(name)
+        if sev == "critical":
+            config["checks"]["systemd"]["units"].append(name)
+        else:
+            config["checks"]["systemd"]["units"].append({"name": name, "severity": sev})
 
 
 def _section_process(config: dict) -> None:

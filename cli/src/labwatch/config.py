@@ -3,10 +3,13 @@
 import os
 import platform
 import copy
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+
+_ENV_VAR_RE = re.compile(r"\$\{([^}]+)\}")
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -110,14 +113,30 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _expand_env_vars(obj):
+    """Recursively expand ${VAR} references in string values."""
+    if isinstance(obj, str):
+        return _ENV_VAR_RE.sub(lambda m: os.environ.get(m.group(1), m.group(0)), obj)
+    if isinstance(obj, dict):
+        return {k: _expand_env_vars(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_expand_env_vars(item) for item in obj]
+    return obj
+
+
 def load_config(path: Optional[Path] = None) -> Dict[str, Any]:
-    """Load config from YAML file, merged with defaults."""
+    """Load config from YAML file, merged with defaults.
+
+    String values containing ``${VAR}`` are expanded from environment
+    variables.  Unset variables are left as-is.
+    """
     path = path or default_config_path()
     if not path.exists():
         return copy.deepcopy(DEFAULT_CONFIG)
     with open(path, "r") as f:
         user_config = yaml.safe_load(f) or {}
-    return deep_merge(DEFAULT_CONFIG, user_config)
+    merged = deep_merge(DEFAULT_CONFIG, user_config)
+    return _expand_env_vars(merged)
 
 
 def save_config(config: Dict[str, Any], path: Optional[Path] = None) -> Path:

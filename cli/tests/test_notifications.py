@@ -65,6 +65,12 @@ class TestSeverityOrder:
 
 
 class TestMinSeverityFiltering:
+    """Tests for min_severity filtering.
+
+    State is mocked so every test starts with no previous check state
+    (clean slate — all failures are "new").
+    """
+
     def _config(self, min_severity="warning"):
         return {
             "hostname": "test",
@@ -83,8 +89,10 @@ class TestMinSeverityFiltering:
             ))
         return report
 
+    @patch("labwatch.runner.save_state")
+    @patch("labwatch.runner.load_state", return_value={})
     @patch("labwatch.runner.get_notifiers")
-    def test_warning_filter_skips_ok(self, mock_notifiers):
+    def test_warning_filter_skips_ok(self, mock_notifiers, _ls, _ss):
         mock_send = MagicMock()
         notifier = MagicMock()
         notifier.send = mock_send
@@ -96,8 +104,10 @@ class TestMinSeverityFiltering:
 
         mock_send.assert_not_called()
 
+    @patch("labwatch.runner.save_state")
+    @patch("labwatch.runner.load_state", return_value={})
     @patch("labwatch.runner.get_notifiers")
-    def test_warning_filter_sends_on_warning(self, mock_notifiers):
+    def test_warning_filter_sends_on_warning(self, mock_notifiers, _ls, _ss):
         mock_send = MagicMock()
         notifier = MagicMock()
         notifier.send = mock_send
@@ -114,8 +124,10 @@ class TestMinSeverityFiltering:
         assert "check-0" not in message
         assert "check-1" in message
 
+    @patch("labwatch.runner.save_state")
+    @patch("labwatch.runner.load_state", return_value={})
     @patch("labwatch.runner.get_notifiers")
-    def test_critical_filter_skips_warning(self, mock_notifiers):
+    def test_critical_filter_skips_warning(self, mock_notifiers, _ls, _ss):
         mock_send = MagicMock()
         notifier = MagicMock()
         notifier.send = mock_send
@@ -127,8 +139,10 @@ class TestMinSeverityFiltering:
 
         mock_send.assert_not_called()
 
+    @patch("labwatch.runner.save_state")
+    @patch("labwatch.runner.load_state", return_value={})
     @patch("labwatch.runner.get_notifiers")
-    def test_critical_filter_sends_on_critical(self, mock_notifiers):
+    def test_critical_filter_sends_on_critical(self, mock_notifiers, _ls, _ss):
         mock_send = MagicMock()
         notifier = MagicMock()
         notifier.send = mock_send
@@ -145,8 +159,10 @@ class TestMinSeverityFiltering:
         assert "check-0" not in message
         assert "check-1" in message
 
+    @patch("labwatch.runner.save_state")
+    @patch("labwatch.runner.load_state", return_value={})
     @patch("labwatch.runner.get_notifiers")
-    def test_ok_filter_sends_everything(self, mock_notifiers):
+    def test_ok_filter_sends_everything(self, mock_notifiers, _ls, _ss):
         mock_send = MagicMock()
         notifier = MagicMock()
         notifier.send = mock_send
@@ -161,8 +177,10 @@ class TestMinSeverityFiltering:
         assert "check-0" in message
         assert "check-1" in message
 
+    @patch("labwatch.runner.save_state")
+    @patch("labwatch.runner.load_state", return_value={})
     @patch("labwatch.runner.get_notifiers")
-    def test_severity_passed_to_notifier(self, mock_notifiers):
+    def test_severity_passed_to_notifier(self, mock_notifiers, _ls, _ss):
         mock_send = MagicMock()
         notifier = MagicMock()
         notifier.send = mock_send
@@ -174,3 +192,55 @@ class TestMinSeverityFiltering:
 
         kwargs = mock_send.call_args[1]
         assert kwargs["severity"] == "critical"
+
+    @patch("labwatch.runner.save_state")
+    @patch("labwatch.runner.load_state", return_value={"checks": {"check-0": "critical"}})
+    @patch("labwatch.runner.get_notifiers")
+    def test_dedup_suppresses_repeated_failure(self, mock_notifiers, _ls, _ss):
+        """Same severity as last run — no notification."""
+        mock_send = MagicMock()
+        notifier = MagicMock()
+        notifier.send = mock_send
+        mock_notifiers.return_value = [notifier]
+
+        runner = Runner(self._config("warning"))
+        report = self._report(Severity.CRITICAL)
+        runner.notify(report)
+
+        mock_send.assert_not_called()
+
+    @patch("labwatch.runner.save_state")
+    @patch("labwatch.runner.load_state", return_value={"checks": {"check-0": "critical"}})
+    @patch("labwatch.runner.get_notifiers")
+    def test_recovery_sends_notification(self, mock_notifiers, _ls, _ss):
+        """Previously critical, now OK — sends recovery alert."""
+        mock_send = MagicMock()
+        notifier = MagicMock()
+        notifier.send = mock_send
+        mock_notifiers.return_value = [notifier]
+
+        runner = Runner(self._config("warning"))
+        report = self._report(Severity.OK)
+        runner.notify(report)
+
+        mock_send.assert_called_once()
+        title = mock_send.call_args[0][0]
+        assert "RECOVERED" in title
+
+    @patch("labwatch.runner.save_state")
+    @patch("labwatch.runner.load_state", return_value={"checks": {"check-0": "warning"}})
+    @patch("labwatch.runner.get_notifiers")
+    def test_escalation_sends_notification(self, mock_notifiers, _ls, _ss):
+        """Severity changed from warning to critical — sends new alert."""
+        mock_send = MagicMock()
+        notifier = MagicMock()
+        notifier.send = mock_send
+        mock_notifiers.return_value = [notifier]
+
+        runner = Runner(self._config("warning"))
+        report = self._report(Severity.CRITICAL)
+        runner.notify(report)
+
+        mock_send.assert_called_once()
+        title = mock_send.call_args[0][0]
+        assert "CRITICAL" in title

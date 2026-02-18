@@ -2,6 +2,8 @@
 
 import io
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,8 +12,22 @@ from rich.console import Console
 from rich.table import Table
 
 from labwatch import __version__
+from labwatch.checks import get_check_classes
 from labwatch.config import load_config, validate_config, default_config_path
 from labwatch.models import Severity
+
+
+def _validate_modules(modules, ctx):
+    """Validate --only module names against the check registry. Exits on error."""
+    if not modules:
+        return
+    valid = set(get_check_classes().keys())
+    bad = [m for m in modules if m not in valid]
+    if bad:
+        console = _get_console(ctx)
+        console.print(f"[red]Unknown check module(s): {', '.join(bad)}[/red]")
+        console.print(f"Valid modules: {', '.join(sorted(valid))}")
+        raise SystemExit(1)
 
 
 def _get_config(ctx) -> dict:
@@ -37,19 +53,50 @@ def _get_console(ctx) -> Console:
               help="Path to config file.")
 @click.option("--no-color", is_flag=True, help="Disable colored output.")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose output.")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress output on success (for cron).")
 @click.pass_context
-def cli(ctx, config_path, no_color, verbose):
+def cli(ctx, config_path, no_color, verbose, quiet):
     """labwatch - Homelab monitoring CLI."""
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
     ctx.obj["no_color"] = no_color
     ctx.obj["verbose"] = verbose
+    ctx.obj["quiet"] = quiet
 
 
 @cli.command()
 def version():
     """Show labwatch version."""
     click.echo(f"labwatch {__version__}")
+
+
+@cli.command("completion")
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
+def completion_cmd(shell):
+    """Print shell completion script.
+
+    \b
+    Usage:
+      labwatch completion bash >> ~/.bashrc
+      labwatch completion zsh  >> ~/.zshrc
+      labwatch completion fish > ~/.config/fish/completions/labwatch.fish
+    """
+    env_var = "_LABWATCH_COMPLETE"
+    source_map = {"bash": "bash_source", "zsh": "zsh_source", "fish": "fish_source"}
+    env = {**os.environ, env_var: source_map[shell]}
+    result = subprocess.run(
+        ["labwatch"], env=env, capture_output=True, text=True,
+    )
+    if result.stdout:
+        click.echo(result.stdout)
+    else:
+        # Fallback: print the eval-based snippet
+        snippets = {
+            "bash": f'eval "$({env_var}={source_map[shell]} labwatch)"',
+            "zsh": f'eval "$({env_var}={source_map[shell]} labwatch)"',
+            "fish": f'set -x {env_var} {source_map[shell]}; labwatch | source',
+        }
+        click.echo(snippets[shell])
 
 
 @cli.command("config")
@@ -69,7 +116,13 @@ def config_cmd(ctx, do_validate, do_edit):
             console.print(f"[red]Config file does not exist:[/red] {resolved_path}")
             console.print("Run [bold]labwatch init[/bold] to create it.")
             raise SystemExit(1)
-        click.edit(filename=str(resolved_path))
+        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+        if not editor:
+            if sys.platform == "win32":
+                editor = "notepad"
+            else:
+                editor = "nano"
+        click.edit(filename=str(resolved_path), editor=editor)
         return
 
     cfg = _get_config(ctx)
@@ -126,36 +179,45 @@ def config_cmd(ctx, do_validate, do_edit):
 @cli.command("check")
 @click.option("--only", default=None, help="Comma-separated list of check modules.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.option("--no-notify", is_flag=True, help="Run checks without sending notifications.")
 @click.pass_context
-def check_cmd(ctx, only, as_json):
+def check_cmd(ctx, only, as_json, no_notify):
     """Run monitoring checks."""
     from labwatch.runner import Runner
 
     console = _get_console(ctx)
     cfg = _get_config(ctx)
+    quiet = ctx.obj.get("quiet", False)
 
     modules = [m.strip() for m in only.split(",")] if only else None
+    _validate_modules(modules, ctx)
+
     runner = Runner(cfg, verbose=ctx.obj.get("verbose", False))
     report = runner.run(modules)
 
     if as_json:
         click.echo(json.dumps(report.to_dict(), indent=2))
-        return
+    elif not (quiet and not report.has_failures):
+        table = Table(title=f"labwatch \u2014 {report.hostname}")
+        table.add_column("Check", style="cyan")
+        table.add_column("Status")
+        table.add_column("Message")
 
-    table = Table(title=f"labwatch \u2014 {report.hostname}")
-    table.add_column("Check", style="cyan")
-    table.add_column("Status")
-    table.add_column("Message")
+        for result in report.results:
+            table.add_row(result.name, result.severity.icon, result.message)
 
-    for result in report.results:
-        table.add_row(result.name, result.severity.icon, result.message)
+        console.print(table)
 
-    console.print(table)
-
-    if report.has_failures:
+    if report.has_failures and not no_notify:
         runner.notify(report)
         if ctx.obj.get("verbose"):
             console.print("[dim]Notifications sent.[/dim]")
+
+    # Exit code: 0 = OK, 1 = WARNING, 2 = CRITICAL
+    if report.worst_severity == Severity.CRITICAL:
+        raise SystemExit(2)
+    elif report.worst_severity == Severity.WARNING:
+        raise SystemExit(1)
 
 
 @cli.command("notify")
@@ -183,12 +245,46 @@ def notify_cmd(ctx, title, message):
 
 
 @cli.command("discover")
+@click.option("--systemd", "show_systemd", is_flag=True,
+              help="Show systemd services instead of Docker containers.")
 @click.pass_context
-def discover_cmd(ctx):
-    """Discover Docker containers and suggest HTTP endpoints."""
-    from labwatch.discovery import discover_containers, suggest_endpoints
-
+def discover_cmd(ctx, show_systemd):
+    """Discover Docker containers and systemd services."""
     console = _get_console(ctx)
+
+    if show_systemd:
+        from labwatch.discovery import discover_systemd_units
+
+        units = discover_systemd_units()
+        if units is None:
+            console.print("[yellow]systemctl is not available.[/yellow]")
+            return
+
+        if not units:
+            console.print("[dim]No services found.[/dim]")
+            return
+
+        table = Table(title="Systemd Services")
+        table.add_column("Unit", style="cyan")
+        table.add_column("State")
+        table.add_column("Known As")
+
+        for u in units:
+            state_style = {
+                "active": "[green]active[/green]",
+                "inactive": "[dim]inactive[/dim]",
+                "failed": "[red]failed[/red]",
+            }.get(u["state"], u["state"])
+            table.add_row(
+                u["unit"].replace(".service", ""),
+                state_style,
+                u["label"] or "[dim]-[/dim]",
+            )
+
+        console.print(table)
+        return
+
+    from labwatch.discovery import discover_containers, suggest_endpoints
 
     containers = discover_containers()
     if containers is None:
@@ -297,6 +393,7 @@ def schedule_check(ctx, every, only):
 
     console = _get_console(ctx)
     modules = [m.strip() for m in only.split(",")] if only else None
+    _validate_modules(modules, ctx)
     try:
         line = scheduler.add_entry("check", every, modules=modules)
         console.print(f"[green]\u2714[/green] Scheduled: {line}")
@@ -604,6 +701,7 @@ def motd_cmd(ctx, only):
 
     cfg = _get_config(ctx)
     modules = [m.strip() for m in only.split(",")] if only else None
+    _validate_modules(modules, ctx)
     runner = Runner(cfg, verbose=False)
     report = runner.run(modules)
 
@@ -640,3 +738,248 @@ def init_cmd(ctx, only):
     if config_path:
         config_path = Path(config_path)
     run_wizard(config_path, only=only)
+
+
+@cli.command("enable")
+@click.argument("module")
+@click.pass_context
+def enable_cmd(ctx, module):
+    """Enable a check module.
+
+    \b
+    Example:
+      labwatch enable docker
+      labwatch enable dns
+    """
+    _toggle_module(ctx, module, True)
+
+
+@cli.command("disable")
+@click.argument("module")
+@click.pass_context
+def disable_cmd(ctx, module):
+    """Disable a check module.
+
+    \b
+    Example:
+      labwatch disable docker
+      labwatch disable dns
+    """
+    _toggle_module(ctx, module, False)
+
+
+def _toggle_module(ctx, module: str, enabled: bool) -> None:
+    """Toggle a check module on or off and save config."""
+    from labwatch.config import save_config
+
+    console = _get_console(ctx)
+    _validate_modules([module], ctx)
+
+    config_path = ctx.obj.get("config_path")
+    path = Path(config_path) if config_path else default_config_path()
+    if not path.exists():
+        console.print("[red]No config file found.[/red] Run [bold]labwatch init[/bold] first.")
+        raise SystemExit(1)
+
+    cfg = _get_config(ctx)
+    cfg.setdefault("checks", {}).setdefault(module, {})["enabled"] = enabled
+    save_config(cfg, path)
+
+    state = "enabled" if enabled else "disabled"
+    console.print(f"[green]\u2714[/green] {module} {state}")
+
+
+@cli.command("self-update")
+@click.pass_context
+def self_update_cmd(ctx):
+    """Update labwatch to the latest version from PyPI."""
+    console = _get_console(ctx)
+    current = __version__
+
+    console.print(f"[bold]Current version:[/bold] {current}")
+    console.print("Checking PyPI for updates...")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "labwatch"],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode != 0:
+        console.print(f"[red]Update failed:[/red]")
+        if result.stderr:
+            console.print(result.stderr.strip())
+        raise SystemExit(1)
+
+    # Re-check the installed version
+    ver_result = subprocess.run(
+        [sys.executable, "-c", "import labwatch; print(labwatch.__version__)"],
+        capture_output=True, text=True,
+    )
+    new_version = ver_result.stdout.strip() if ver_result.returncode == 0 else "unknown"
+
+    if new_version == current:
+        console.print(f"[green]\u2714[/green] Already up to date ({current})")
+    else:
+        console.print(f"[green]\u2714[/green] Updated: {current} \u2192 {new_version}")
+
+
+@cli.command("doctor")
+@click.pass_context
+def doctor_cmd(ctx):
+    """Check labwatch installation health.
+
+    Verifies config, connectivity, required tools, and cron entries.
+    """
+    console = _get_console(ctx)
+    ok_count = 0
+    warn_count = 0
+    fail_count = 0
+
+    def _ok(msg):
+        nonlocal ok_count
+        ok_count += 1
+        console.print(f"  [green]\u2714[/green] {msg}")
+
+    def _warn(msg):
+        nonlocal warn_count
+        warn_count += 1
+        console.print(f"  [yellow]\u26a0[/yellow] {msg}")
+
+    def _fail(msg):
+        nonlocal fail_count
+        fail_count += 1
+        console.print(f"  [red]\u2718[/red] {msg}")
+
+    console.print("[bold]labwatch doctor[/bold]")
+    console.print()
+
+    # --- Config file ---
+    console.print("[bold]Config[/bold]")
+    config_path_str = ctx.obj.get("config_path")
+    path = Path(config_path_str) if config_path_str else default_config_path()
+    if path.exists():
+        _ok(f"Config file exists: {path}")
+        # Check permissions on Unix
+        if sys.platform != "win32":
+            mode = oct(path.stat().st_mode)[-3:]
+            if mode in ("600", "400", "640", "644"):
+                _ok(f"File permissions: {mode}")
+            else:
+                _warn(f"File permissions are {mode} — consider chmod 600 to protect secrets")
+    else:
+        _fail(f"Config file not found: {path}")
+        console.print("    Run [bold]labwatch init[/bold] to create it.")
+        console.print()
+        console.print(f"  {ok_count} passed, {warn_count} warnings, {fail_count} errors")
+        raise SystemExit(1)
+
+    cfg = _get_config(ctx)
+    errors = validate_config(cfg)
+    if errors:
+        _fail(f"Config validation failed ({len(errors)} error(s))")
+        for err in errors:
+            console.print(f"    {err}")
+    else:
+        _ok("Config is valid")
+
+    # Check for unexpanded env vars
+    import yaml as _yaml
+    with open(path, "r") as f:
+        raw = f.read()
+    unexpanded = [m.group(0) for m in __import__("re").finditer(r"\$\{(\w+)\}", raw)
+                  if not os.environ.get(m.group(1))]
+    if unexpanded:
+        _warn(f"Unexpanded env vars (not set): {', '.join(unexpanded)}")
+
+    console.print()
+
+    # --- Notifications ---
+    console.print("[bold]Notifications[/bold]")
+    ntfy = cfg.get("notifications", {}).get("ntfy", {})
+    if ntfy.get("enabled"):
+        server = ntfy.get("server", "")
+        topic = ntfy.get("topic", "")
+        if server and topic:
+            _ok(f"ntfy configured: {server}/{topic}")
+            # Test connectivity to server
+            try:
+                import requests
+                resp = requests.get(server, timeout=5)
+                if resp.status_code < 500:
+                    _ok(f"ntfy server reachable ({resp.status_code})")
+                else:
+                    _warn(f"ntfy server returned {resp.status_code}")
+            except Exception as e:
+                _fail(f"Cannot reach ntfy server: {e}")
+        else:
+            _fail("ntfy enabled but server/topic not configured")
+    else:
+        _warn("No notification backend enabled")
+
+    console.print()
+
+    # --- Docker ---
+    console.print("[bold]Docker[/bold]")
+    docker_enabled = cfg.get("checks", {}).get("docker", {}).get("enabled", False)
+    if docker_enabled:
+        try:
+            import docker as _docker
+            client = _docker.from_env()
+            client.ping()
+            _ok("Docker daemon reachable")
+        except Exception as e:
+            _fail(f"Docker daemon not reachable: {e}")
+    else:
+        console.print("  [dim]Docker check disabled — skipped[/dim]")
+
+    console.print()
+
+    # --- System tools ---
+    console.print("[bold]System tools[/bold]")
+    checks_cfg = cfg.get("checks", {})
+
+    tool_checks = []
+    if checks_cfg.get("systemd", {}).get("enabled"):
+        tool_checks.append(("systemctl", "systemd"))
+    if checks_cfg.get("process", {}).get("enabled") and sys.platform != "win32":
+        tool_checks.append(("pgrep", "process"))
+    if checks_cfg.get("ping", {}).get("enabled"):
+        tool_checks.append(("ping", "ping"))
+    if checks_cfg.get("network", {}).get("enabled"):
+        tool_checks.append(("ip", "network"))
+
+    if tool_checks:
+        import shutil
+        for tool, check_name in tool_checks:
+            if shutil.which(tool):
+                _ok(f"{tool} found (used by {check_name} check)")
+            else:
+                _fail(f"{tool} not found — required by {check_name} check")
+    else:
+        console.print("  [dim]No tool-dependent checks enabled[/dim]")
+
+    console.print()
+
+    # --- Cron ---
+    console.print("[bold]Schedule[/bold]")
+    if sys.platform == "win32":
+        console.print("  [dim]Cron not available on Windows — use Task Scheduler[/dim]")
+    else:
+        try:
+            from labwatch.scheduler import list_entries
+            entries = list_entries()
+            if entries:
+                _ok(f"{len(entries)} cron entry(ies) installed")
+                for entry in entries:
+                    console.print(f"    {entry}")
+            else:
+                _warn("No labwatch cron entries found — checks won't run automatically")
+                console.print("    Run [bold]labwatch init[/bold] or [bold]labwatch schedule check --every 5m[/bold]")
+        except Exception as e:
+            _warn(f"Could not read crontab: {e}")
+
+    console.print()
+    console.print(f"  {ok_count} passed, {warn_count} warnings, {fail_count} errors")
+
+    if fail_count:
+        raise SystemExit(1)
