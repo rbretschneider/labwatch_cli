@@ -278,6 +278,12 @@ def _review_existing_list(
     return []
 
 
+def _confirm_enable(label: str, current: bool) -> bool:
+    """Prompt the user to enable/disable a module, showing current state."""
+    state = "enabled" if current else "disabled"
+    return click.confirm(f"Enable {label}? (currently {state})", default=current)
+
+
 # ---------------------------------------------------------------------------
 # Per-section functions.  Each mutates *config* in place and reads existing
 # values as defaults so that a re-run shows the previous answers.
@@ -321,9 +327,9 @@ def _section_notifications(config: dict) -> None:
     )
 
     existing_ntfy = config.get("notifications", {}).get("ntfy", {})
-    ntfy_enabled = click.confirm(
-        "Enable ntfy notifications?",
-        default=existing_ntfy.get("enabled", True),
+    ntfy_enabled = _confirm_enable(
+        "ntfy notifications",
+        existing_ntfy.get("enabled", True),
     )
 
     # Merge rather than replace — preserves min_severity and other keys.
@@ -362,9 +368,9 @@ def _section_system(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         sys_enabled = True
     else:
-        sys_enabled = click.confirm(
-            "Enable system checks (disk, memory, CPU)?",
-            default=existing.get("enabled", True),
+        sys_enabled = _confirm_enable(
+            "system checks (disk, memory, CPU)",
+            existing.get("enabled", True),
         )
 
     config.setdefault("checks", {})
@@ -419,15 +425,17 @@ def _section_docker(config: dict, *, from_menu: bool = False) -> None:
         containers = discover_containers()
         if containers is not None:
             click.echo(f"Found {len(containers)} Docker container(s).")
-            docker_enabled = click.confirm(
-                "Enable Docker monitoring?",
-                default=existing.get("enabled", True),
+            docker_enabled = _confirm_enable(
+                "Docker monitoring",
+                existing.get("enabled", True),
             )
         else:
             click.echo("Docker not available on this system.")
+            cur = existing.get("enabled", False)
+            state = "enabled" if cur else "disabled"
             docker_enabled = click.confirm(
-                "Enable Docker monitoring anyway (for remote use)?",
-                default=existing.get("enabled", False),
+                f"Enable Docker monitoring anyway (for remote use)? (currently {state})",
+                default=cur,
             )
 
     config.setdefault("checks", {})
@@ -447,9 +455,9 @@ def _section_http(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         http_enabled = True
     else:
-        http_enabled = click.confirm(
-            "Enable HTTP endpoint checks?",
-            default=existing.get("enabled", True),
+        http_enabled = _confirm_enable(
+            "HTTP endpoint checks",
+            existing.get("enabled", True),
         )
 
     config.setdefault("checks", {})
@@ -508,9 +516,9 @@ def _section_nginx(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         nginx_enabled = True
     else:
-        nginx_enabled = click.confirm(
-            "Enable Nginx monitoring?",
-            default=existing.get("enabled", False),
+        nginx_enabled = _confirm_enable(
+            "Nginx monitoring",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -572,9 +580,9 @@ def _section_smart(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         smart_enabled = True
     else:
-        smart_enabled = click.confirm(
-            "Enable S.M.A.R.T. disk health monitoring?",
-            default=existing.get("enabled", False),
+        smart_enabled = _confirm_enable(
+            "S.M.A.R.T. disk health monitoring",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -636,9 +644,9 @@ def _section_dns(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         dns_enabled = True
     else:
-        dns_enabled = click.confirm(
-            "Enable DNS resolution monitoring?",
-            default=existing.get("enabled", False),
+        dns_enabled = _confirm_enable(
+            "DNS resolution monitoring",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -675,9 +683,9 @@ def _section_certs(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         certs_enabled = True
     else:
-        certs_enabled = click.confirm(
-            "Enable TLS certificate expiry monitoring?",
-            default=existing.get("enabled", False),
+        certs_enabled = _confirm_enable(
+            "TLS certificate expiry monitoring",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -727,9 +735,9 @@ def _section_ping(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         ping_enabled = True
     else:
-        ping_enabled = click.confirm(
-            "Enable ping/connectivity monitoring?",
-            default=existing.get("enabled", False),
+        ping_enabled = _confirm_enable(
+            "ping/connectivity monitoring",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -767,9 +775,9 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         ha_enabled = True
     else:
-        ha_enabled = click.confirm(
-            "Enable Home Assistant monitoring?",
-            default=existing.get("enabled", False),
+        ha_enabled = _confirm_enable(
+            "Home Assistant monitoring",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -837,18 +845,20 @@ def _section_systemd(config: dict, *, from_menu: bool = False) -> None:
         systemd_enabled = True
     elif discovered is None:
         click.echo("  systemctl not available on this system.")
+        cur = existing.get("enabled", False)
+        state = "enabled" if cur else "disabled"
         systemd_enabled = click.confirm(
-            "Enable systemd monitoring anyway (for remote use)?",
-            default=existing.get("enabled", False),
+            f"Enable systemd monitoring anyway (for remote use)? (currently {state})",
+            default=cur,
         )
     else:
         known = [u for u in discovered if u["label"]]
         running = [u for u in discovered if u["state"] == "active"]
         click.echo(f"  Found {len(running)} running service(s)"
                     f" ({len(known)} recognized homelab service(s)).")
-        systemd_enabled = click.confirm(
-            "Enable systemd unit monitoring?",
-            default=existing.get("enabled", bool(known)) or existing.get("enabled", False),
+        systemd_enabled = _confirm_enable(
+            "systemd unit monitoring",
+            existing.get("enabled", bool(known)) or existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -947,9 +957,9 @@ def _section_process(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         process_enabled = True
     else:
-        process_enabled = click.confirm(
-            "Enable process monitoring?",
-            default=existing.get("enabled", False),
+        process_enabled = _confirm_enable(
+            "process monitoring",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -986,9 +996,9 @@ def _section_network(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         network_enabled = True
     else:
-        network_enabled = click.confirm(
-            "Enable network interface monitoring?",
-            default=existing.get("enabled", False),
+        network_enabled = _confirm_enable(
+            "network interface monitoring",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -1040,9 +1050,9 @@ def _section_updates(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         updates_enabled = True
     else:
-        updates_enabled = click.confirm(
-            "Enable package updates monitoring?",
-            default=existing.get("enabled", False),
+        updates_enabled = _confirm_enable(
+            "package updates monitoring",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -1077,9 +1087,9 @@ def _section_command(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         command_enabled = True
     else:
-        command_enabled = click.confirm(
-            "Enable custom command checks?",
-            default=existing.get("enabled", False),
+        command_enabled = _confirm_enable(
+            "custom command checks",
+            existing.get("enabled", False),
         )
 
     config.setdefault("checks", {})
@@ -1139,7 +1149,7 @@ def _section_autoupdate(config: dict, *, from_menu: bool = False) -> None:
     if from_menu:
         update_enabled = True
     else:
-        update_enabled = click.confirm("Configure Docker Compose auto-updates?", default=bool(kept))
+        update_enabled = _confirm_enable("Docker Compose auto-updates", bool(kept))
 
     if update_enabled:
         _configure_auto_updates(config)
@@ -1769,8 +1779,8 @@ def _print_done() -> None:
     click.secho("Useful commands", bold=True)
     click.echo("  labwatch check               # run all checks once")
     click.echo("  labwatch check --only system  # run one check module")
-    click.echo("  labwatch config               # show config path and summary")
-    click.echo("  labwatch config --validate    # verify your config")
     click.echo("  labwatch summarize            # see what's being monitored")
+    click.echo("  labwatch validate             # verify your config")
+    click.echo("  labwatch edit                 # open config in your editor")
     click.echo("  labwatch schedule list        # view cron schedule")
     click.echo("  labwatch init                 # re-run this wizard")

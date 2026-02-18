@@ -61,15 +61,16 @@ The `labwatch init` wizard handles everything: config generation, notification t
 | `labwatch update --dry-run` | Preview what would be updated |
 | `labwatch update --force` | Update even version-pinned tags |
 | `labwatch notify "Title" "Message"` | Send a one-off notification |
-| `labwatch config` | Show current config summary and file path |
-| `labwatch config --edit` | Open config in your default editor ($EDITOR) |
-| `labwatch config --validate` | Validate config file |
+| `labwatch summarize` | Show config summary as a Rich tree |
+| `labwatch validate` | Validate config file |
+| `labwatch edit` | Open config in your default editor ($EDITOR) |
 | `labwatch schedule check --every 5m` | Schedule checks to cron |
 | `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
 | `labwatch schedule update --every 1d` | Schedule Docker Compose updates |
 | `labwatch schedule list` | Show all labwatch cron entries |
 | `labwatch schedule remove` | Remove labwatch cron entries |
-| `labwatch summarize` | Plain-English overview of what's configured |
+| `labwatch enable docker` | Enable a check module |
+| `labwatch disable docker` | Disable a check module |
 | `labwatch motd` | Plain-text login summary for SSH MOTD |
 | `labwatch version` | Show version |
 
@@ -96,7 +97,7 @@ Global options: `--config PATH`, `--no-color`, `--verbose`
 
 Config is a single YAML file at `~/.config/labwatch/config.yaml` (Linux/macOS) or `%APPDATA%\labwatch\config.yaml` (Windows). On Linux, `.config` is a hidden directory — use `ls -a ~` to see it, or open directly: `nano ~/.config/labwatch/config.yaml`.
 
-Run `labwatch config` to see the resolved path and summary. Run `labwatch init` to generate it interactively. Re-run `labwatch init` to edit your config — existing values become defaults. Use `labwatch init --only http` to edit a single section. See the [main README](../README.md) for a full config example.
+Run `labwatch summarize` to see the resolved path and summary. Run `labwatch init` to generate it interactively. Re-run `labwatch init` to edit your config — existing values become defaults. Use `labwatch init --only http` to edit a single section. See the [main README](../README.md) for a full config example.
 
 ## Scheduling
 

@@ -68,7 +68,7 @@ pip install labwatch
 
 ```bash
 # Self-update from anywhere
-labwatch self-update
+labwatch update
 
 # Or manually via pipx / pip
 pipx upgrade labwatch
@@ -136,27 +136,26 @@ Use `--config /tmp/test.yaml` to try it without overwriting your real config.
 | `labwatch check --no-notify` | Run checks without sending notifications |
 | `labwatch discover` | List Docker containers, suggest HTTP endpoints |
 | `labwatch discover --systemd` | List systemd services, highlight known homelab services |
-| `labwatch update` | Pull latest Docker images and restart changed services |
-| `labwatch update --dry-run` | Show what would be updated without pulling |
-| `labwatch update --force` | Update even version-pinned tags |
+| `labwatch docker-update` | Pull latest Docker images and restart changed services |
+| `labwatch docker-update --dry-run` | Show what would be updated without pulling |
+| `labwatch docker-update --force` | Update even version-pinned tags |
 | `labwatch notify "Title" "Message"` | Send a one-off push notification |
-| `labwatch config` | Show current config summary and file path |
-| `labwatch config --edit` | Open config in your default editor |
-| `labwatch config --validate` | Validate config file |
+| `labwatch summarize` | Show config summary as a Rich tree |
+| `labwatch validate` | Validate config file |
+| `labwatch edit` | Open config in your default editor |
 | `labwatch enable docker` | Enable a check module |
 | `labwatch disable docker` | Disable a check module |
 | `labwatch doctor` | Check installation health and connectivity |
 | `labwatch schedule check --every 5m` | Schedule all checks to cron |
 | `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
-| `labwatch schedule update --every 1d` | Add update schedule to cron |
+| `labwatch schedule docker-update --every 1d` | Add Docker update schedule to cron |
 | `labwatch schedule list` | Show all labwatch cron entries |
 | `labwatch schedule remove` | Remove all labwatch cron entries |
 | `labwatch schedule remove --only check` | Remove only check entries |
-| `labwatch summarize` | Plain-English overview of what's configured |
 | `labwatch motd` | Plain-text login summary for SSH MOTD |
 | `labwatch motd --only updates` | MOTD for specific modules only |
 | `labwatch completion bash` | Print shell completion script (bash/zsh/fish) |
-| `labwatch self-update` | Update labwatch to the latest PyPI release |
+| `labwatch update` | Update labwatch to the latest PyPI release |
 | `labwatch version` | Show version |
 
 **Global options:** `--config PATH`, `--no-color`, `--verbose`, `--quiet`
@@ -185,7 +184,47 @@ Config is a single YAML file. `labwatch init` creates it for you, and the wizard
 
 > **Note:** On Linux/macOS, `.config` is a hidden directory (the dot prefix hides it from `ls` by default). Use `ls -a` to see it, or just open the file directly: `nano ~/.config/labwatch/config.yaml`
 
-Run `labwatch config` at any time to see the resolved path and a summary of what's configured. Run `labwatch init` to regenerate it interactively, or edit by hand:
+Run `labwatch summarize` at any time to see the resolved path and a tree view of what's configured:
+
+```
+my-server
+├── Notifications enabled
+│   ├── ntfy: https://ntfy.sh/homelab_alerts
+│   └── min severity: warning
+├── Monitoring (8 modules)
+│   ├── System
+│   │   ├── disk: warn 80% / crit 90%
+│   │   ├── memory: warn 80% / crit 90%
+│   │   └── cpu: warn 80% / crit 95%
+│   ├── Docker
+│   │   ├── watching: all containers
+│   │   └── alert on stopped containers
+│   ├── HTTP Endpoints
+│   │   ├── Grafana: http://localhost:3000 (timeout 10s)
+│   │   └── Plex: http://localhost:32400/identity (timeout 5s)
+│   ├── DNS Resolution
+│   │   ├── google.com
+│   │   └── github.com
+│   ├── TLS Certificates
+│   │   ├── mydomain.com
+│   │   └── warn at 14 days / crit at 7 days
+│   ├── Ping
+│   │   ├── 8.8.8.8
+│   │   ├── 1.1.1.1
+│   │   └── timeout: 5s
+│   ├── Systemd Units
+│   │   ├── docker (critical)
+│   │   └── wg-quick@wg0 (critical)
+│   └── Package Updates
+│       ├── warn at 1+ pending
+│       └── critical at 50+ pending
+├── Disabled: Nginx, S.M.A.R.T., Network Interfaces, Home Assistant, Processes, Custom Commands
+└── Auto-updates (2 directories)
+    ├── /home/docker/plex
+    └── /home/docker/grafana
+```
+
+Run `labwatch init` to regenerate it interactively, or edit by hand:
 
 ```yaml
 hostname: "my-server"
@@ -360,7 +399,7 @@ labwatch schedule check --only docker,system --every 30m
 labwatch schedule check --only updates --every 1d
 
 # Docker Compose image updates weekly
-labwatch schedule update --every 1w
+labwatch schedule docker-update --every 1w
 
 # See what's scheduled
 labwatch schedule list

@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.table import Table
+from rich.tree import Tree
 
 from labwatch import __version__
 from labwatch.checks import get_check_classes
@@ -97,83 +98,6 @@ def completion_cmd(shell):
             "fish": f'set -x {env_var} {source_map[shell]}; labwatch | source',
         }
         click.echo(snippets[shell])
-
-
-@cli.command("config")
-@click.option("--validate", "do_validate", is_flag=True,
-              help="Validate the config file.")
-@click.option("--edit", "do_edit", is_flag=True,
-              help="Open the config file in your default editor.")
-@click.pass_context
-def config_cmd(ctx, do_validate, do_edit):
-    """Show or validate the current configuration."""
-    console = _get_console(ctx)
-    config_path = ctx.obj.get("config_path")
-    resolved_path = Path(config_path) if config_path else default_config_path()
-
-    if do_edit:
-        if not resolved_path.exists():
-            console.print(f"[red]Config file does not exist:[/red] {resolved_path}")
-            console.print("Run [bold]labwatch init[/bold] to create it.")
-            raise SystemExit(1)
-        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
-        if not editor:
-            if sys.platform == "win32":
-                editor = "notepad"
-            else:
-                editor = "nano"
-        click.edit(filename=str(resolved_path), editor=editor)
-        return
-
-    cfg = _get_config(ctx)
-
-    if do_validate:
-        errors = validate_config(cfg)
-        if errors:
-            console.print("[red]Config validation failed:[/red]")
-            for err in errors:
-                console.print(f"  [red]\u2718[/red] {err}")
-            raise SystemExit(1)
-        else:
-            console.print(f"[green]\u2714[/green] Config is valid: {resolved_path}")
-            return
-
-    console.print(f"[bold]Config file:[/bold] {resolved_path}")
-    console.print(f"[bold]Exists:[/bold] {resolved_path.exists()}")
-    console.print()
-
-    table = Table(title="Configuration Summary")
-    table.add_column("Setting", style="cyan")
-    table.add_column("Value")
-
-    table.add_row("hostname", cfg.get("hostname", ""))
-
-    ntfy = cfg.get("notifications", {}).get("ntfy", {})
-    table.add_row("ntfy.enabled", str(ntfy.get("enabled", False)))
-    table.add_row("ntfy.server", ntfy.get("server", ""))
-    table.add_row("ntfy.topic", ntfy.get("topic", ""))
-
-    min_sev = cfg.get("notifications", {}).get("min_severity", "warning")
-    table.add_row("notifications.min_severity", min_sev)
-
-    checks = cfg.get("checks", {})
-    check_names = [
-        "system", "docker", "http", "nginx", "smart", "dns", "ping",
-        "home_assistant", "systemd", "process", "command", "network", "updates",
-    ]
-    for name in check_names:
-        enabled = checks.get(name, {}).get("enabled", False)
-        table.add_row(f"checks.{name}", "enabled" if enabled else "disabled")
-
-    endpoints = checks.get("http", {}).get("endpoints", [])
-    if endpoints:
-        names = ", ".join(ep.get("name", "?") for ep in endpoints)
-        table.add_row("http.endpoints", names)
-
-    compose_dirs = cfg.get("update", {}).get("compose_dirs", [])
-    table.add_row("update.compose_dirs", ", ".join(compose_dirs) if compose_dirs else "(none)")
-
-    console.print(table)
 
 
 @cli.command("check")
@@ -479,257 +403,295 @@ def schedule_remove(ctx, only):
 @cli.command("summarize")
 @click.pass_context
 def summarize_cmd(ctx):
-    """Print a plain-English overview of what labwatch is monitoring."""
+    """Show a Rich tree overview of the current configuration."""
+    console = _get_console(ctx)
+    config_path = ctx.obj.get("config_path")
+    resolved_path = Path(config_path) if config_path else default_config_path()
     cfg = _get_config(ctx)
-    lines = _build_summary(cfg)
-    for line in lines:
-        click.echo(line)
+    console.print(f"[bold]Config file:[/bold] {resolved_path}")
+    console.print()
+    tree = _build_config_tree(cfg)
+    console.print(tree)
 
 
-def _build_summary(cfg: dict) -> list:
-    """Turn the loaded config into a list of human-readable lines."""
-    lines = []
+@cli.command("validate")
+@click.pass_context
+def validate_cmd(ctx):
+    """Validate the config file."""
+    console = _get_console(ctx)
+    config_path = ctx.obj.get("config_path")
+    resolved_path = Path(config_path) if config_path else default_config_path()
+    cfg = _get_config(ctx)
+    errors = validate_config(cfg)
+    if errors:
+        console.print("[red]Config validation failed:[/red]")
+        for err in errors:
+            console.print(f"  [red]\u2718[/red] {err}")
+        raise SystemExit(1)
+    else:
+        console.print(f"[green]\u2714[/green] Config is valid: {resolved_path}")
+
+
+@cli.command("edit")
+@click.pass_context
+def edit_cmd(ctx):
+    """Open the config file in your default editor."""
+    console = _get_console(ctx)
+    config_path = ctx.obj.get("config_path")
+    resolved_path = Path(config_path) if config_path else default_config_path()
+    if not resolved_path.exists():
+        console.print(f"[red]Config file does not exist:[/red] {resolved_path}")
+        console.print("Run [bold]labwatch init[/bold] to create it.")
+        raise SystemExit(1)
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if not editor:
+        if sys.platform == "win32":
+            editor = "notepad"
+        else:
+            editor = "nano"
+    click.edit(filename=str(resolved_path), editor=editor)
+
+
+# ---------------------------------------------------------------------------
+# Rich config tree — used by the `summarize` command
+# ---------------------------------------------------------------------------
+
+_MODULE_DISPLAY = [
+    ("system", "System"),
+    ("docker", "Docker"),
+    ("http", "HTTP Endpoints"),
+    ("nginx", "Nginx"),
+    ("smart", "S.M.A.R.T."),
+    ("dns", "DNS Resolution"),
+    ("certs", "TLS Certificates"),
+    ("ping", "Ping"),
+    ("network", "Network Interfaces"),
+    ("home_assistant", "Home Assistant"),
+    ("systemd", "Systemd Units"),
+    ("process", "Processes"),
+    ("updates", "Package Updates"),
+    ("command", "Custom Commands"),
+]
+
+
+def _build_config_tree(cfg: dict) -> Tree:
+    """Build a Rich Tree representing the full configuration."""
     hostname = cfg.get("hostname", "unknown")
-    lines.append(f"Server: {hostname}")
-    lines.append("")
+    tree = Tree(f"[bold cyan]{hostname}[/bold cyan]")
 
-    # --- Notifications -----------------------------------------------------------
+    # --- Notifications ---
     notif = cfg.get("notifications", {})
     ntfy = notif.get("ntfy", {})
-    min_sev = notif.get("min_severity", "warning")
-
     if ntfy.get("enabled"):
         server = ntfy.get("server", "https://ntfy.sh")
         topic = ntfy.get("topic", "homelab_alerts")
-        lines.append(f"Notifications: ntfy enabled")
-        lines.append(f"  Push to {server}/{topic}")
-        lines.append(f"  Priority mapping: CRITICAL -> urgent, WARNING -> high")
-        lines.append(f"  Only notify on severity >= {min_sev}")
+        notif_branch = tree.add("[green]Notifications enabled[/green]")
+        notif_branch.add(f"ntfy: {server}/{topic}")
+        min_sev = notif.get("min_severity", "warning")
+        notif_branch.add(f"min severity: {min_sev}")
     else:
-        lines.append("Notifications: disabled (ntfy not enabled)")
+        tree.add("[dim]Notifications disabled[/dim]")
 
-    lines.append("")
-
-    # --- Checks ------------------------------------------------------------------
+    # --- Monitoring modules ---
     checks = cfg.get("checks", {})
-    enabled_checks = []
-
-    # System
-    sys_cfg = checks.get("system", {})
-    if sys_cfg.get("enabled"):
-        t = sys_cfg.get("thresholds", {})
-        parts = []
-        parts.append(f"disk warn {t.get('disk_warning', 80)}%/crit {t.get('disk_critical', 90)}%")
-        parts.append(f"mem warn {t.get('memory_warning', 80)}%/crit {t.get('memory_critical', 90)}%")
-        parts.append(f"cpu warn {t.get('cpu_warning', 80)}%/crit {t.get('cpu_critical', 95)}%")
-        enabled_checks.append(("System", parts))
-
-    # Docker
-    docker_cfg = checks.get("docker", {})
-    if docker_cfg.get("enabled"):
-        parts = []
-        containers = docker_cfg.get("containers", [])
-        if containers:
-            parts.append(f"watching containers: {', '.join(containers)}")
+    enabled_modules = []
+    disabled_modules = []
+    for key, label in _MODULE_DISPLAY:
+        if checks.get(key, {}).get("enabled"):
+            enabled_modules.append((key, label))
         else:
-            parts.append("watching all containers")
-        if docker_cfg.get("watch_stopped"):
-            parts.append("alerting on stopped containers")
-        enabled_checks.append(("Docker", parts))
+            disabled_modules.append(label)
 
-    # HTTP
-    http_cfg = checks.get("http", {})
-    if http_cfg.get("enabled"):
-        eps = http_cfg.get("endpoints", [])
-        if eps:
-            parts = [f"{ep.get('name', '?')} -> {ep.get('url', '?')}" for ep in eps]
-        else:
-            parts = ["(no endpoints configured)"]
-        enabled_checks.append(("HTTP endpoints", parts))
-
-    # Nginx
-    nginx_cfg = checks.get("nginx", {})
-    if nginx_cfg.get("enabled"):
-        parts = []
-        container = nginx_cfg.get("container", "")
-        if container:
-            parts.append(f"via Docker container '{container}'")
-        else:
-            parts.append("via host systemd/process")
-        eps = nginx_cfg.get("endpoints", [])
-        if eps:
-            for url in eps:
-                parts.append(f"endpoint: {url}")
-        enabled_checks.append(("Nginx", parts))
-
-    # DNS
-    dns_cfg = checks.get("dns", {})
-    if dns_cfg.get("enabled"):
-        domains = dns_cfg.get("domains", [])
-        if domains:
-            parts = [f"resolving: {d}" for d in domains]
-        else:
-            parts = ["(no domains configured)"]
-        enabled_checks.append(("DNS resolution", parts))
-
-    # Certs
-    certs_cfg = checks.get("certs", {})
-    if certs_cfg.get("enabled"):
-        domains = certs_cfg.get("domains", [])
-        warn_d = certs_cfg.get("warn_days", 14)
-        crit_d = certs_cfg.get("critical_days", 7)
-        if domains:
-            parts = [f"checking: {d}" for d in domains]
-        else:
-            parts = ["(no domains configured)"]
-        parts.append(f"warn at {warn_d} days, critical at {crit_d} days")
-        enabled_checks.append(("TLS certificates", parts))
-
-    # Ping
-    ping_cfg = checks.get("ping", {})
-    if ping_cfg.get("enabled"):
-        hosts = ping_cfg.get("hosts", [])
-        timeout = ping_cfg.get("timeout", 5)
-        if hosts:
-            parts = [f"pinging: {h}" for h in hosts]
-        else:
-            parts = ["(no hosts configured)"]
-        parts.append(f"timeout: {timeout}s")
-        enabled_checks.append(("Ping", parts))
-
-    # Network
-    net_cfg = checks.get("network", {})
-    if net_cfg.get("enabled"):
-        ifaces = net_cfg.get("interfaces", [])
-        if ifaces:
-            parts = [f"{i.get('name', '?')} ({i.get('severity', 'critical')})" for i in ifaces]
-        else:
-            parts = ["(no interfaces configured)"]
-        enabled_checks.append(("Network interfaces", parts))
-
-    # Home Assistant
-    ha_cfg = checks.get("home_assistant", {})
-    if ha_cfg.get("enabled"):
-        parts = [f"URL: {ha_cfg.get('url', '?')}"]
-        ext = ha_cfg.get("external_url", "")
-        if ext:
-            parts.append(f"external URL: {ext}")
-        if ha_cfg.get("token"):
-            parts.append("authenticated (token set)")
-        else:
-            parts.append("unauthenticated (no token)")
-        if ha_cfg.get("google_home"):
-            parts.append("Google Home connectivity check enabled")
-        enabled_checks.append(("Home Assistant", parts))
-
-    # Systemd
-    sd_cfg = checks.get("systemd", {})
-    if sd_cfg.get("enabled"):
-        units = sd_cfg.get("units", [])
-        parts = []
-        for u in units:
-            if isinstance(u, str):
-                parts.append(f"{u} (critical)")
-            else:
-                name = u.get("name", "?")
-                sev = u.get("severity", "critical")
-                parts.append(f"{name} ({sev})")
-        if not parts:
-            parts = ["(no units configured)"]
-        enabled_checks.append(("Systemd units", parts))
-
-    # Process
-    proc_cfg = checks.get("process", {})
-    if proc_cfg.get("enabled"):
-        names = proc_cfg.get("names", [])
-        if names:
-            parts = [name for name in names]
-        else:
-            parts = ["(no process names configured)"]
-        enabled_checks.append(("Processes", parts))
-
-    # Command
-    cmd_cfg = checks.get("command", {})
-    if cmd_cfg.get("enabled"):
-        cmds = cmd_cfg.get("commands", [])
-        parts = []
-        for c in cmds:
-            desc = f"{c.get('name', '?')}: `{c.get('command', '?')}`"
-            extras = []
-            if c.get("expect_output"):
-                extras.append(f"expect '{c['expect_output']}' in output")
-            if c.get("expect_exit") is not None and c["expect_exit"] != 0:
-                extras.append(f"expect exit {c['expect_exit']}")
-            sev = c.get("severity", "critical")
-            if sev != "critical":
-                extras.append(f"severity: {sev}")
-            if extras:
-                desc += f" ({', '.join(extras)})"
-            parts.append(desc)
-        if not parts:
-            parts = ["(no commands configured)"]
-        enabled_checks.append(("Custom commands", parts))
-
-    # Updates
-    upd_cfg = checks.get("updates", {})
-    if upd_cfg.get("enabled"):
-        warn_t = upd_cfg.get("warning_threshold", 1)
-        crit_t = upd_cfg.get("critical_threshold", 50)
-        parts = [
-            f"warn at {warn_t}+ pending, critical at {crit_t}+",
-        ]
-        enabled_checks.append(("System updates", parts))
-
-    # S.M.A.R.T.
-    smart_cfg = checks.get("smart", {})
-    if smart_cfg.get("enabled"):
-        parts = [
-            f"temp warn {smart_cfg.get('temp_warning', 50)}C/crit {smart_cfg.get('temp_critical', 60)}C",
-            f"wear warn {smart_cfg.get('wear_warning', 80)}%/crit {smart_cfg.get('wear_critical', 90)}%",
-        ]
-        devices = smart_cfg.get("devices", [])
-        if devices:
-            parts.append(f"devices: {', '.join(devices)}")
-        else:
-            parts.append("auto-detect all devices")
-        enabled_checks.append(("S.M.A.R.T. disk health", parts))
-
-    # --- Render ------------------------------------------------------------------
-    if enabled_checks:
-        lines.append(f"Monitoring ({len(enabled_checks)} check groups enabled):")
-        for label, parts in enabled_checks:
-            lines.append(f"  {label}:")
-            for p in parts:
-                lines.append(f"    - {p}")
+    if enabled_modules:
+        mon_branch = tree.add(f"[bold]Monitoring ({len(enabled_modules)} modules)[/bold]")
+        _tree_builders = {
+            "system": _tree_system,
+            "docker": _tree_docker,
+            "http": _tree_http,
+            "nginx": _tree_nginx,
+            "smart": _tree_smart,
+            "dns": _tree_dns,
+            "certs": _tree_certs,
+            "ping": _tree_ping,
+            "network": _tree_network,
+            "home_assistant": _tree_home_assistant,
+            "systemd": _tree_systemd,
+            "process": _tree_process,
+            "updates": _tree_updates,
+            "command": _tree_command,
+        }
+        for key, label in enabled_modules:
+            mod_branch = mon_branch.add(f"[cyan]{label}[/cyan]")
+            builder = _tree_builders.get(key)
+            if builder:
+                builder(mod_branch, checks.get(key, {}))
     else:
-        lines.append("No checks are currently enabled.")
+        tree.add("[dim]No checks enabled[/dim]")
 
-    # Disabled checks
-    all_names = {
-        "system": "System", "docker": "Docker", "http": "HTTP",
-        "nginx": "Nginx", "smart": "S.M.A.R.T.", "dns": "DNS",
-        "certs": "Certs", "ping": "Ping",
-        "network": "Network", "home_assistant": "Home Assistant",
-        "systemd": "Systemd", "process": "Process", "command": "Command",
-        "updates": "Updates",
-    }
-    disabled = [
-        label for key, label in all_names.items()
-        if not checks.get(key, {}).get("enabled")
-    ]
-    if disabled:
-        lines.append("")
-        lines.append(f"Disabled: {', '.join(disabled)}")
+    # --- Disabled modules ---
+    if disabled_modules:
+        tree.add(f"[dim]Disabled: {', '.join(disabled_modules)}[/dim]")
 
-    # Auto-updates
+    # --- Auto-updates ---
     compose_dirs = cfg.get("update", {}).get("compose_dirs", [])
     if compose_dirs:
-        lines.append("")
-        lines.append("Docker Compose auto-update directories:")
+        upd_branch = tree.add(f"[bold]Auto-updates ({len(compose_dirs)} directories)[/bold]")
         for d in compose_dirs:
-            lines.append(f"  - {d}")
+            upd_branch.add(d)
 
-    return lines
+    return tree
+
+
+def _tree_system(branch, cfg):
+    t = cfg.get("thresholds", {})
+    branch.add(f"disk: warn {t.get('disk_warning', 80)}% / crit {t.get('disk_critical', 90)}%")
+    branch.add(f"memory: warn {t.get('memory_warning', 80)}% / crit {t.get('memory_critical', 90)}%")
+    branch.add(f"cpu: warn {t.get('cpu_warning', 80)}% / crit {t.get('cpu_critical', 95)}%")
+
+
+def _tree_docker(branch, cfg):
+    containers = cfg.get("containers", [])
+    if containers:
+        branch.add(f"watching: {', '.join(containers)}")
+    else:
+        branch.add("watching: all containers")
+    if cfg.get("watch_stopped"):
+        branch.add("alert on stopped containers")
+
+
+def _tree_http(branch, cfg):
+    eps = cfg.get("endpoints", [])
+    if eps:
+        for ep in eps:
+            timeout = ep.get("timeout", 10)
+            branch.add(f"{ep.get('name', '?')}: {ep.get('url', '?')} (timeout {timeout}s)")
+    else:
+        branch.add("[dim](no endpoints configured)[/dim]")
+
+
+def _tree_nginx(branch, cfg):
+    container = cfg.get("container", "")
+    if container:
+        branch.add(f"via Docker container: {container}")
+    else:
+        branch.add("via host systemd/process")
+    if cfg.get("config_test", True):
+        branch.add("config test: enabled")
+    eps = cfg.get("endpoints", [])
+    for url in eps:
+        branch.add(f"endpoint: {url}")
+
+
+def _tree_smart(branch, cfg):
+    branch.add(f"temp: warn {cfg.get('temp_warning', 50)}C / crit {cfg.get('temp_critical', 60)}C")
+    branch.add(f"wear: warn {cfg.get('wear_warning', 80)}% / crit {cfg.get('wear_critical', 90)}%")
+    devices = cfg.get("devices", [])
+    if devices:
+        for d in devices:
+            branch.add(f"device: {d}")
+    else:
+        branch.add("auto-detect all devices")
+
+
+def _tree_dns(branch, cfg):
+    domains = cfg.get("domains", [])
+    if domains:
+        for d in domains:
+            branch.add(d)
+    else:
+        branch.add("[dim](no domains configured)[/dim]")
+
+
+def _tree_certs(branch, cfg):
+    domains = cfg.get("domains", [])
+    if domains:
+        for d in domains:
+            branch.add(d)
+    else:
+        branch.add("[dim](no domains configured)[/dim]")
+    warn_d = cfg.get("warn_days", 14)
+    crit_d = cfg.get("critical_days", 7)
+    branch.add(f"warn at {warn_d} days / crit at {crit_d} days")
+
+
+def _tree_ping(branch, cfg):
+    hosts = cfg.get("hosts", [])
+    if hosts:
+        for h in hosts:
+            branch.add(h)
+    else:
+        branch.add("[dim](no hosts configured)[/dim]")
+    branch.add(f"timeout: {cfg.get('timeout', 5)}s")
+
+
+def _tree_network(branch, cfg):
+    ifaces = cfg.get("interfaces", [])
+    if ifaces:
+        for i in ifaces:
+            branch.add(f"{i.get('name', '?')} ({i.get('severity', 'critical')})")
+    else:
+        branch.add("[dim](no interfaces configured)[/dim]")
+
+
+def _tree_home_assistant(branch, cfg):
+    branch.add(f"URL: {cfg.get('url', '?')}")
+    ext = cfg.get("external_url", "")
+    if ext:
+        branch.add(f"external: {ext}")
+    if cfg.get("token"):
+        branch.add("token: set")
+    else:
+        branch.add("token: not set")
+    if cfg.get("google_home"):
+        branch.add("Google Home check: enabled")
+
+
+def _tree_systemd(branch, cfg):
+    units = cfg.get("units", [])
+    if units:
+        for u in units:
+            if isinstance(u, str):
+                branch.add(f"{u} (critical)")
+            else:
+                branch.add(f"{u.get('name', '?')} ({u.get('severity', 'critical')})")
+    else:
+        branch.add("[dim](no units configured)[/dim]")
+
+
+def _tree_process(branch, cfg):
+    names = cfg.get("names", [])
+    if names:
+        for n in names:
+            branch.add(n)
+    else:
+        branch.add("[dim](no process names configured)[/dim]")
+
+
+def _tree_updates(branch, cfg):
+    warn_t = cfg.get("warning_threshold", 1)
+    crit_t = cfg.get("critical_threshold", 50)
+    branch.add(f"warn at {warn_t}+ pending")
+    branch.add(f"critical at {crit_t}+ pending")
+
+
+def _tree_command(branch, cfg):
+    cmds = cfg.get("commands", [])
+    if cmds:
+        for c in cmds:
+            name = c.get("name", "?")
+            cmd = c.get("command", "?")
+            sev = c.get("severity", "critical")
+            desc = f"{name}: {cmd} ({sev})"
+            extras = []
+            if c.get("expect_output"):
+                extras.append(f"expect '{c['expect_output']}'")
+            if c.get("expect_exit") is not None and c["expect_exit"] != 0:
+                extras.append(f"expect exit {c['expect_exit']}")
+            if extras:
+                desc += f" ({', '.join(extras)})"
+            branch.add(desc)
+    else:
+        branch.add("[dim](no commands configured)[/dim]")
 
 
 @cli.command("motd")
