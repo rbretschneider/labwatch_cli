@@ -1,3 +1,12 @@
+```
+██╗      █████╗ ██████╗ ██╗    ██╗ █████╗ ████████╗ ██████╗██╗  ██╗
+██║     ██╔══██╗██╔══██╗██║    ██║██╔══██╗╚══██╔══╝██╔════╝██║  ██║
+██║     ███████║██████╔╝██║ █╗ ██║███████║   ██║   ██║     ███████║
+██║     ██╔══██║██╔══██╗██║███╗██║██╔══██║   ██║   ██║     ██╔══██║
+███████╗██║  ██║██████╔╝╚███╔███╔╝██║  ██║   ██║   ╚██████╗██║  ██║
+╚══════╝╚═╝  ╚═╝╚═════╝  ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝    ╚═════╝╚═╝  ╚═╝
+```
+
 # labwatch
 
 A CLI tool for monitoring your homelab. Tracks system resources, Docker containers, systemd services, VPNs, Nginx, DNS, network interfaces, and more. Schedules checks with cron, sends push notifications on failures via [ntfy](https://ntfy.sh), and can automate Docker Compose image updates.
@@ -28,6 +37,7 @@ Homelabs tend to grow into a sprawl of containers, services, and network configs
 | **process** | `pgrep -x` (or tasklist on Windows) to verify processes are running by exact name. |
 | **home_assistant** | HA `/api/` health, optional external URL check, optional Google Home cloud API, authenticated checks with long-lived token. |
 | **updates** | Counts pending package updates (apt/dnf/yum). Warn at N+ pending, critical at M+. |
+| **smart** | S.M.A.R.T. disk health for HDDs, SSDs, and NVMe via smartctl. Raspberry Pi SD/eMMC wear via sysfs. Alerts on failing health, high temps, excessive wear, reallocated sectors. |
 | **command** | Run any shell command. Exit 0 = OK, non-zero = failure. Optional output string matching. |
 
 ## Install
@@ -95,15 +105,16 @@ That's it. The wizard handles config generation, notification testing, and cron 
 
 ## The Setup Wizard
 
-`labwatch init` is the primary way to configure labwatch. It walks through every section with explanations written for someone who may not know what each subsystem is:
+`labwatch init` is the primary way to configure labwatch. It walks through every section with beginner-friendly explanations — no assumptions about what you already know:
 
-1. **Hostname** — identifies your server in alerts
-2. **Notifications (ntfy)** — explains what ntfy is, how to set up a server/topic, and what each field means
-3. **Check modules** — each of the 12 check types gets a detailed description of exactly what it monitors, what states trigger alerts, and why you'd want it. Systemd monitoring auto-discovers running services and highlights 70+ known homelab services (Pi-hole, WireGuard, CUPS, Tailscale, Plex, etc.) so you can pick from a list instead of typing unit names from memory.
-4. **Docker auto-updates** — auto-detects Compose projects from running containers via Docker labels, or scans a base directory for compose files
-5. **Summary** — shows what you enabled/disabled, your notification target, and auto-update directories
-6. **Notification test** — sends a test alert to verify your ntfy setup works before you rely on it
-7. **Scheduling** — explains that labwatch is not a daemon and needs cron, shows a recommended schedule grouped by frequency, and offers three options:
+1. **Module selection** — the fun part first. A checkbox menu of all 13 monitoring modules with short descriptions. Pick what matches your setup; skip the rest. You can always come back.
+2. **Hostname** — a friendly name for this machine (shows up in alerts so you know which server is talking)
+3. **Notifications (ntfy)** — explains what ntfy is, why you want push alerts, and walks through server/topic setup
+4. **Module details** — for each module you selected, configures thresholds, endpoints, devices, etc. Systemd monitoring auto-discovers running services and highlights 70+ known homelab services (Pi-hole, WireGuard, CUPS, Tailscale, Plex, etc.) so you can pick from a list instead of typing unit names from memory.
+5. **Docker auto-updates** — auto-detects Compose projects from running containers via Docker labels, or scans a base directory for compose files
+6. **Summary** — shows what you enabled/disabled, your notification target, and auto-update directories
+7. **Notification test** — sends a test alert to verify your ntfy setup works before you rely on it
+8. **Scheduling** — explains what cron is, shows a recommended schedule grouped by frequency, and offers three options:
    - **Accept** the recommended schedule (installs cron entries immediately)
    - **Customize** per check group (choose from sensible frequency options like every 5 min, hourly, daily, weekly)
    - **None** (skip scheduling, print the manual commands for later)
@@ -261,6 +272,14 @@ checks:
     warning_threshold: 1        # warn if any updates pending
     critical_threshold: 50      # critical if 50+ pending
 
+  smart:
+    enabled: true
+    temp_warning: 50
+    temp_critical: 60
+    wear_warning: 80
+    wear_critical: 90
+    devices: []              # empty = auto-detect all drives
+
   command:
     enabled: false
     commands:
@@ -303,7 +322,20 @@ labwatch disable docker
 
 labwatch is not a daemon — it runs once and exits. To monitor continuously, it needs a cron job. The `labwatch init` wizard can set this up for you, or you can manage it manually with `labwatch schedule`.
 
-labwatch manages its own cron entries so you don't have to edit crontab by hand. Use `--only` to run different check modules at different frequencies. Each `--only` combination gets its own cron entry, so they all coexist:
+labwatch manages its own cron entries so you don't have to edit crontab by hand. All labwatch entries are grouped inside a clearly marked block so you can tell them apart from your own cron jobs:
+
+```
+# your existing cron jobs stay untouched up here
+0 * * * * /usr/bin/backup.sh
+
+# ── LABWATCH ENTRIES (generated by labwatch init) ──
+*/1 * * * * /usr/bin/labwatch check --only network # labwatch:check:network
+*/5 * * * * /usr/bin/labwatch check --only dns,http,nginx,ping # labwatch:check:dns,http,nginx,ping
+*/30 * * * * /usr/bin/labwatch check --only docker,system # labwatch:check:docker,system
+# ── END LABWATCH ENTRIES ──
+```
+
+Use `--only` to run different check modules at different frequencies. Each `--only` combination gets its own cron entry, so they all coexist:
 
 ```bash
 # Network interface checks every minute (VPN tunnels, WireGuard)
