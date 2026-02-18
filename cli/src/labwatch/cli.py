@@ -572,6 +572,19 @@ def _build_summary(cfg: dict) -> list:
             parts = ["(no domains configured)"]
         enabled_checks.append(("DNS resolution", parts))
 
+    # Certs
+    certs_cfg = checks.get("certs", {})
+    if certs_cfg.get("enabled"):
+        domains = certs_cfg.get("domains", [])
+        warn_d = certs_cfg.get("warn_days", 14)
+        crit_d = certs_cfg.get("critical_days", 7)
+        if domains:
+            parts = [f"checking: {d}" for d in domains]
+        else:
+            parts = ["(no domains configured)"]
+        parts.append(f"warn at {warn_d} days, critical at {crit_d} days")
+        enabled_checks.append(("TLS certificates", parts))
+
     # Ping
     ping_cfg = checks.get("ping", {})
     if ping_cfg.get("enabled"):
@@ -694,7 +707,8 @@ def _build_summary(cfg: dict) -> list:
     # Disabled checks
     all_names = {
         "system": "System", "docker": "Docker", "http": "HTTP",
-        "nginx": "Nginx", "smart": "S.M.A.R.T.", "dns": "DNS", "ping": "Ping",
+        "nginx": "Nginx", "smart": "S.M.A.R.T.", "dns": "DNS",
+        "certs": "Certs", "ping": "Ping",
         "network": "Network", "home_assistant": "Home Assistant",
         "systemd": "Systemd", "process": "Process", "command": "Command",
         "updates": "Updates",

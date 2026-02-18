@@ -86,6 +86,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "warning_threshold": 1,
             "critical_threshold": 50,
         },
+        "certs": {
+            "enabled": False,
+            "domains": [],
+            "warn_days": 14,
+            "critical_days": 7,
+        },
         "smart": {
             "enabled": False,
             "temp_warning": 50,
@@ -218,6 +224,22 @@ def validate_config(config: Dict[str, Any]) -> list:
         if not isinstance(host, str) or not host.strip():
             errors.append("ping.hosts must contain non-empty strings")
             break
+
+    # Validate certs
+    certs_cfg = checks.get("certs", {})
+    for domain in certs_cfg.get("domains", []):
+        if not isinstance(domain, str) or not domain.strip():
+            errors.append("certs.domains must contain non-empty strings")
+            break
+    certs_warn = certs_cfg.get("warn_days", 14)
+    certs_crit = certs_cfg.get("critical_days", 7)
+    if not isinstance(certs_warn, int) or certs_warn <= 0:
+        errors.append("certs.warn_days must be a positive integer")
+    if not isinstance(certs_crit, int) or certs_crit <= 0:
+        errors.append("certs.critical_days must be a positive integer")
+    if (isinstance(certs_warn, int) and isinstance(certs_crit, int)
+            and certs_warn <= certs_crit):
+        errors.append("certs.warn_days must be greater than critical_days")
 
     ha_cfg = checks.get("home_assistant", {})
     if ha_cfg.get("enabled") and not ha_cfg.get("url"):

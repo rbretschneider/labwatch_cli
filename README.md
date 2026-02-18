@@ -32,6 +32,7 @@ Homelabs tend to grow into a sprawl of containers, services, and network configs
 | **nginx** | Verifies Nginx is running (systemd/pgrep or Docker), validates config with `nginx -t`, checks endpoint URLs. |
 | **systemd** | Runs `systemctl is-active` per unit. Only "active" is healthy — inactive, failed, activating, etc. all trigger alerts. Auto-discovers running services during setup. |
 | **dns** | DNS lookups via `getaddrinfo`. Alerts if resolution fails. |
+| **certs** | TLS certificate expiry monitoring. Connects to port 443, checks the certificate expiry date, and alerts at configurable warning/critical day thresholds. Catches silent certbot/ACME renewal failures. |
 | **ping** | Single ICMP ping per host with round-trip time. Alerts if unreachable. |
 | **network** | Per-interface: link state (UP/DOWN), IPv4 address assigned, TX bytes transmitted. Good for VPN tunnels and WireGuard. |
 | **process** | `pgrep -x` (or tasklist on Windows) to verify processes are running by exact name. |
@@ -107,7 +108,7 @@ That's it. The wizard handles config generation, notification testing, and cron 
 
 `labwatch init` is the primary way to configure labwatch. It walks through every section with beginner-friendly explanations — no assumptions about what you already know:
 
-1. **Module selection** — the fun part first. A checkbox menu of all 13 monitoring modules with short descriptions. Pick what matches your setup; skip the rest. You can always come back.
+1. **Module selection** — the fun part first. A checkbox menu of all 14 monitoring modules with short descriptions. Pick what matches your setup; skip the rest. You can always come back.
 2. **Hostname** — a friendly name for this machine (shows up in alerts so you know which server is talking)
 3. **Notifications (ntfy)** — explains what ntfy is, why you want push alerts, and walks through server/topic setup
 4. **Module details** — for each module you selected, configures thresholds, endpoints, devices, etc. Systemd monitoring auto-discovers running services and highlights 70+ known homelab services (Pi-hole, WireGuard, CUPS, Tailscale, Plex, etc.) so you can pick from a list instead of typing unit names from memory.
@@ -247,6 +248,14 @@ checks:
     domains:
       - "google.com"
       - "github.com"
+
+  certs:
+    enabled: true
+    domains:
+      - "mydomain.com"
+      - "nextcloud.example.org"
+    warn_days: 14              # warning when cert expires within 14 days
+    critical_days: 7           # critical when cert expires within 7 days
 
   ping:
     enabled: true

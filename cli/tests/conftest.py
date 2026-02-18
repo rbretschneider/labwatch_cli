@@ -111,6 +111,12 @@ def full_cfg():
                 "warning_threshold": 1,
                 "critical_threshold": 50,
             },
+            "certs": {
+                "enabled": True,
+                "domains": ["example.com", "app.example.com"],
+                "warn_days": 14,
+                "critical_days": 7,
+            },
             "smart": {
                 "enabled": True,
                 "temp_warning": 50,

@@ -103,6 +103,24 @@ class TestBuildSummaryDNSCheck:
         assert "(no domains configured)" in text
 
 
+class TestBuildSummaryCertsCheck:
+    def test_certs_enabled(self, full_cfg):
+        text = "\n".join(_build_summary(full_cfg))
+        assert "TLS certificates:" in text
+        assert "checking: example.com" in text
+        assert "checking: app.example.com" in text
+        assert "warn at 14 days, critical at 7 days" in text
+
+    def test_certs_no_domains(self, full_cfg):
+        full_cfg["checks"]["certs"]["domains"] = []
+        text = "\n".join(_build_summary(full_cfg))
+        assert "(no domains configured)" in text
+
+    def test_certs_disabled(self, default_cfg):
+        text = "\n".join(_build_summary(default_cfg))
+        assert "TLS certificates:" not in text
+
+
 class TestBuildSummaryPingCheck:
     def test_hosts_and_timeout(self, full_cfg):
         text = "\n".join(_build_summary(full_cfg))
@@ -211,7 +229,7 @@ class TestBuildSummarySmartCheck:
 class TestBuildSummaryCheckCounts:
     def test_all_enabled_count(self, full_cfg):
         text = "\n".join(_build_summary(full_cfg))
-        assert "13 check groups enabled" in text
+        assert "14 check groups enabled" in text
 
     def test_nothing_enabled(self):
         cfg = {
@@ -232,7 +250,7 @@ class TestBuildSummaryDisabledList:
         # Default config has system, docker, http enabled; rest disabled
         text = "\n".join(_build_summary(default_cfg))
         disabled_section = text.split("Disabled: ")[1]
-        for name in ["Nginx", "S.M.A.R.T.", "DNS", "Ping", "Network", "Home Assistant", "Systemd", "Process", "Command", "Updates"]:
+        for name in ["Nginx", "S.M.A.R.T.", "DNS", "Certs", "Ping", "Network", "Home Assistant", "Systemd", "Process", "Command", "Updates"]:
             assert name in disabled_section
 
     def test_all_enabled_no_disabled(self, full_cfg):

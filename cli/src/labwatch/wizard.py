@@ -43,6 +43,12 @@ CHECK_DESCRIPTIONS = {
         "  (2) runs 'nginx -t' to validate the config has no syntax errors,\n"
         "  and (3) hits any endpoint URLs you add to confirm they're reachable."
     ),
+    "certs": (
+        "Connects to each domain on port 443 and checks the TLS certificate\n"
+        "  expiry date. Alerts when a certificate is approaching expiry or\n"
+        "  has already expired. Catches silent certbot/ACME renewal failures\n"
+        "  — if your certs are renewing properly, this check never fires."
+    ),
     "dns": (
         "Does a DNS lookup (getaddrinfo) for each domain you list and alerts\n"
         "  if resolution fails. Catches DNS server outages, misconfigured\n"
@@ -232,6 +238,7 @@ SECTION_ORDER: List[str] = [
     "nginx",
     "smart",
     "dns",
+    "certs",
     "ping",
     "home_assistant",
     "systemd",
@@ -657,6 +664,58 @@ def _section_dns(config: dict, *, from_menu: bool = False) -> None:
             if not domain.strip():
                 break
             config["checks"]["dns"]["domains"].append(domain.strip())
+
+
+def _section_certs(config: dict, *, from_menu: bool = False) -> None:
+    click.echo()
+    click.secho("TLS certificate expiry monitoring", bold=True)
+    _print_description("certs")
+
+    existing = config.get("checks", {}).get("certs", {})
+    if from_menu:
+        certs_enabled = True
+    else:
+        certs_enabled = click.confirm(
+            "Enable TLS certificate expiry monitoring?",
+            default=existing.get("enabled", False),
+        )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("certs", {})
+    config["checks"]["certs"]["enabled"] = certs_enabled
+
+    existing_domains = existing.get("domains", [])
+    kept = _review_existing_list(existing_domains, "domains", lambda d: d)
+    config["checks"]["certs"]["domains"] = kept
+
+    if certs_enabled:
+        click.secho(
+            "  Enter domain names whose TLS certificates you want to monitor.\n"
+            "  labwatch connects on port 443 and checks the expiry date\n"
+            "  (e.g. mydomain.com, nextcloud.example.org).",
+            dim=True,
+        )
+        while True:
+            domain = click.prompt(
+                "  Domain (empty to finish)",
+                default="", show_default=False,
+            )
+            if not domain.strip():
+                break
+            config["checks"]["certs"]["domains"].append(domain.strip())
+
+        click.secho(
+            "  Set how many days before expiry to trigger each severity level.",
+            dim=True,
+        )
+        config["checks"]["certs"]["warn_days"] = click.prompt(
+            "  Warning threshold (days before expiry)",
+            default=existing.get("warn_days", 14), type=int,
+        )
+        config["checks"]["certs"]["critical_days"] = click.prompt(
+            "  Critical threshold (days before expiry)",
+            default=existing.get("critical_days", 7), type=int,
+        )
 
 
 def _section_ping(config: dict, *, from_menu: bool = False) -> None:
@@ -1103,6 +1162,7 @@ SECTION_FUNCTIONS: Dict[str, Callable] = {
     "nginx": _section_nginx,
     "smart": _section_smart,
     "dns": _section_dns,
+    "certs": _section_certs,
     "ping": _section_ping,
     "home_assistant": _section_home_assistant,
     "systemd": _section_systemd,
@@ -1167,6 +1227,14 @@ MODULES.extend([
         "default_enabled": False,
         "wizard_fn": _section_dns,
         "config_path": "checks.dns",
+    },
+    {
+        "key": "certs",
+        "label": "TLS certificates",
+        "short_desc": "certificate expiry monitoring",
+        "default_enabled": False,
+        "wizard_fn": _section_certs,
+        "config_path": "checks.certs",
     },
     {
         "key": "ping",
@@ -1447,7 +1515,7 @@ def _print_summary(config: dict, config_path: Path) -> None:
     # Enabled/disabled checks
     checks = config.get("checks", {})
     all_check_names = [
-        "system", "docker", "http", "nginx", "smart", "dns", "ping",
+        "system", "docker", "http", "nginx", "smart", "dns", "certs", "ping",
         "home_assistant", "systemd", "process", "network", "updates", "command",
     ]
     enabled = [n for n in all_check_names if checks.get(n, {}).get("enabled")]
@@ -1526,7 +1594,7 @@ SCHEDULE_TIERS: List[Tuple[str, str, List[str], List[Tuple[str, str]]]] = [
         ("15m", "Every 15 minutes"),
         ("30m", "Every 30 minutes"),
     ]),
-    ("5m", "every 5 min", ["http", "dns", "ping", "nginx"], [
+    ("5m", "every 5 min", ["http", "dns", "certs", "ping", "nginx"], [
         ("5m", "Every 5 minutes (recommended)"),
         ("15m", "Every 15 minutes"),
         ("30m", "Every 30 minutes"),

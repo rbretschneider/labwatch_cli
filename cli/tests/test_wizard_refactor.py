@@ -193,9 +193,9 @@ class TestFromMenuParam:
     """All module section functions should accept from_menu kwarg."""
 
     _module_fns = [
-        "system", "docker", "http", "nginx", "smart", "dns", "ping",
-        "home_assistant", "systemd", "process", "network", "updates",
-        "command", "autoupdate",
+        "system", "docker", "http", "nginx", "smart", "dns", "certs",
+        "ping", "home_assistant", "systemd", "process", "network",
+        "updates", "command", "autoupdate",
     ]
 
     def test_section_functions_accept_from_menu(self):

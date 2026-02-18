@@ -207,3 +207,91 @@ class TestNetworkValidation:
             },
         })
         assert validate_config(cfg) == []
+
+
+class TestCertsValidation:
+    def test_valid_certs_config(self):
+        cfg = _cfg(**{
+            "checks.certs": {
+                "enabled": True,
+                "domains": ["example.com"],
+                "warn_days": 14,
+                "critical_days": 7,
+            },
+        })
+        assert validate_config(cfg) == []
+
+    def test_empty_domain_rejected(self):
+        cfg = _cfg(**{
+            "checks.certs": {
+                "enabled": True,
+                "domains": ["good.com", ""],
+                "warn_days": 14,
+                "critical_days": 7,
+            },
+        })
+        errors = validate_config(cfg)
+        assert any("certs.domains" in e for e in errors)
+
+    def test_warn_days_must_be_positive(self):
+        cfg = _cfg(**{
+            "checks.certs": {
+                "enabled": True,
+                "domains": [],
+                "warn_days": 0,
+                "critical_days": 7,
+            },
+        })
+        errors = validate_config(cfg)
+        assert any("warn_days" in e for e in errors)
+
+    def test_critical_days_must_be_positive(self):
+        cfg = _cfg(**{
+            "checks.certs": {
+                "enabled": True,
+                "domains": [],
+                "warn_days": 14,
+                "critical_days": -1,
+            },
+        })
+        errors = validate_config(cfg)
+        assert any("critical_days" in e for e in errors)
+
+    def test_warn_must_be_greater_than_critical(self):
+        cfg = _cfg(**{
+            "checks.certs": {
+                "enabled": True,
+                "domains": [],
+                "warn_days": 7,
+                "critical_days": 14,
+            },
+        })
+        errors = validate_config(cfg)
+        assert any("warn_days must be greater than critical_days" in e for e in errors)
+
+    def test_warn_equal_to_critical_rejected(self):
+        cfg = _cfg(**{
+            "checks.certs": {
+                "enabled": True,
+                "domains": [],
+                "warn_days": 7,
+                "critical_days": 7,
+            },
+        })
+        errors = validate_config(cfg)
+        assert any("warn_days must be greater than critical_days" in e for e in errors)
+
+    def test_empty_domains_valid(self):
+        cfg = _cfg(**{
+            "checks.certs": {
+                "enabled": True,
+                "domains": [],
+                "warn_days": 14,
+                "critical_days": 7,
+            },
+        })
+        assert validate_config(cfg) == []
+
+    def test_defaults_pass_validation(self):
+        """Default certs config should pass validation."""
+        assert validate_config(_cfg()) == []
