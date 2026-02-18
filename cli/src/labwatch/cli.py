@@ -313,11 +313,11 @@ def discover_cmd(ctx, show_systemd):
             console.print(f"  {s['name']}: {s['url']}")
 
 
-@cli.command("update")
+@cli.command("docker-update")
 @click.option("--force", is_flag=True, help="Update even pinned/versioned tags.")
 @click.option("--dry-run", is_flag=True, help="Show what would be updated without pulling.")
 @click.pass_context
-def update_cmd(ctx, force, dry_run):
+def docker_update_cmd(ctx, force, dry_run):
     """Pull latest images and restart Docker Compose services."""
     from labwatch.updater import ComposeUpdater
 
@@ -402,32 +402,32 @@ def schedule_check(ctx, every, only):
         raise SystemExit(1)
 
 
-@schedule_group.command("update")
+@schedule_group.command("docker-update")
 @click.option("--every", required=True, help="Interval (e.g. 4h, 1d).")
 @click.pass_context
-def schedule_update(ctx, every):
+def schedule_docker_update(ctx, every):
     """Schedule periodic Docker Compose updates via cron."""
     from labwatch import scheduler
 
     console = _get_console(ctx)
     try:
-        line = scheduler.add_entry("update", every)
+        line = scheduler.add_entry("docker-update", every)
         console.print(f"[green]\u2714[/green] Scheduled: {line}")
     except (ValueError, RuntimeError) as e:
         console.print(f"[red]{e}[/red]")
         raise SystemExit(1)
 
 
-@schedule_group.command("self-update")
+@schedule_group.command("update")
 @click.option("--every", required=True, help="Interval (e.g. 1d, 1w).")
 @click.pass_context
-def schedule_self_update(ctx, every):
+def schedule_update(ctx, every):
     """Schedule automatic labwatch self-updates via cron."""
     from labwatch import scheduler
 
     console = _get_console(ctx)
     try:
-        line = scheduler.add_entry("self-update", every)
+        line = scheduler.add_entry("update", every)
         console.print(f"[green]\u2714[/green] Scheduled: {line}")
     except (ValueError, RuntimeError) as e:
         console.print(f"[red]{e}[/red]")
@@ -456,7 +456,7 @@ def schedule_list(ctx):
 
 
 @schedule_group.command("remove")
-@click.option("--only", default=None, help="Only remove a specific subcommand (check, update).")
+@click.option("--only", default=None, help="Only remove a specific subcommand (check, docker-update, update).")
 @click.pass_context
 def schedule_remove(ctx, only):
     """Remove labwatch cron entries."""
@@ -819,9 +819,9 @@ def _toggle_module(ctx, module: str, enabled: bool) -> None:
     console.print(f"[green]\u2714[/green] {module} {state}")
 
 
-@cli.command("self-update")
+@cli.command("update")
 @click.pass_context
-def self_update_cmd(ctx):
+def update_cmd(ctx):
     """Update labwatch to the latest version from PyPI."""
     console = _get_console(ctx)
     current = __version__

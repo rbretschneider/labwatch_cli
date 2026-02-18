@@ -24,9 +24,11 @@ CHECK_DESCRIPTIONS = {
         "  an alert with the exact usage and how much headroom is left."
     ),
     "docker": (
-        "Pings the Docker daemon to make sure it's responsive, then lists\n"
-        "  every container and reports its status. 'running' is OK; 'paused'\n"
-        "  or 'restarting' triggers a warning; anything else (exited, dead)\n"
+        "If you run any services in Docker containers (Plex, Grafana,\n"
+        "  Pi-hole, etc.), this module keeps an eye on them. It pings the\n"
+        "  Docker daemon to make sure it's responsive, then lists every\n"
+        "  container and reports its status. 'running' is OK; 'paused' or\n"
+        "  'restarting' triggers a warning; anything else (exited, dead)\n"
         "  triggers a critical alert. Useful for catching crashed containers."
     ),
     "http": (
@@ -100,6 +102,22 @@ CHECK_DESCRIPTIONS = {
 }
 
 # ---------------------------------------------------------------------------
+# ASCII art banner
+# ---------------------------------------------------------------------------
+
+def _print_banner() -> None:
+    """Print a bold cyan ASCII art banner for the wizard."""
+    banner = (
+        "  _       _                _       _\n"
+        " | | __ _| |____      __  | |_ ___| |__\n"
+        " | |/ _` | '_ \\ \\ /\\ / / / _` / __| '_ \\\n"
+        " | | (_| | |_) \\ V  V / | (_| \\__ \\ | | |\n"
+        " |_|\\__,_|_.__/ \\_/\\_/   \\__,_|___/_| |_|\n"
+    )
+    click.secho(banner, fg="cyan", bold=True)
+
+
+# ---------------------------------------------------------------------------
 # Module selection menu — defines all selectable modules for the checkbox
 # prompt.  Each entry maps a key to its menu label, short description,
 # default enabled state, wizard detail function, and the config path used
@@ -144,6 +162,13 @@ def _module_selection_menu(config: dict) -> List[str]:
     click.echo()
     click.secho("Module selection", bold=True)
     click.secho(
+        "  labwatch is made up of modules — each one monitors a different part of\n"
+        "  your homelab. Pick the ones that match your setup. You can always come\n"
+        "  back and change these later by running 'labwatch init' again.\n"
+        "\n"
+        "  Don't worry about configuration yet — just check the boxes for what you\n"
+        "  want to monitor. You'll set up the details for each one in the next steps.\n"
+        "\n"
         "  Use arrow keys to move, space to toggle, enter to confirm.",
         dim=True,
     )
@@ -169,7 +194,14 @@ def _module_selection_fallback(config: dict) -> List[str]:
     click.echo()
     click.secho("Module selection", bold=True)
     click.secho(
-        "  questionary not available — falling back to per-module prompts.",
+        "  labwatch is made up of modules — each one monitors a different part of\n"
+        "  your homelab. Pick the ones that match your setup. You can always come\n"
+        "  back and change these later by running 'labwatch init' again.\n"
+        "\n"
+        "  Don't worry about configuration yet — just check the boxes for what you\n"
+        "  want to monitor. You'll set up the details for each one in the next steps.\n"
+        "\n"
+        "  (questionary not available — falling back to per-module prompts.)",
         dim=True,
     )
     for mod in MODULES:
@@ -246,10 +278,16 @@ def _review_existing_list(
 # ---------------------------------------------------------------------------
 
 def _section_hostname(config: dict) -> None:
+    click.echo()
     click.secho("Hostname", bold=True)
     click.secho(
-        "  This name identifies your server in alerts and reports.\n"
-        "  Use something recognizable — e.g. 'proxmox', 'nas', 'pi-cluster'.",
+        "  Your hostname is a friendly name for this machine — like a nickname.\n"
+        "  It doesn't have to match your actual computer name. It just shows up\n"
+        "  in alerts and reports so you know which server is talking to you.\n"
+        "  If you run labwatch on multiple machines, pick something different\n"
+        "  for each one so you can tell them apart.\n"
+        "\n"
+        "  Examples: 'proxmox-main', 'nas', 'pi-cluster', 'media-server'",
         dim=True,
     )
     default_host = config.get("hostname") or platform.node() or "homelab"
@@ -260,10 +298,15 @@ def _section_notifications(config: dict) -> None:
     click.echo()
     click.secho("Notification setup (ntfy)", bold=True)
     click.secho(
-        "  ntfy (pronounced 'notify') is a simple push notification service.\n"
-        "  When a check fails, labwatch sends an alert to your phone/desktop\n"
-        "  via ntfy. You can self-host ntfy or use the free public server at\n"
-        "  ntfy.sh. Install the ntfy app on your phone to receive alerts.",
+        "  Without notifications, labwatch only shows results when you manually\n"
+        "  run 'labwatch check'. With notifications enabled, you get push alerts\n"
+        "  straight to your phone or desktop whenever something goes wrong —\n"
+        "  like a disk filling up, a container crashing, or a service going down.\n"
+        "\n"
+        "  ntfy (pronounced 'notify') is a free, open-source push notification\n"
+        "  service. You can use the public server at ntfy.sh (no account needed)\n"
+        "  or self-host your own. Install the ntfy app on your phone (Android or\n"
+        "  iOS) and subscribe to your topic to start receiving alerts instantly.",
         dim=True,
     )
 
@@ -1258,25 +1301,28 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
 
     # --- Full wizard flow with module selection menu ---
 
-    # 1. Hostname
+    # 1. ASCII art banner
+    _print_banner()
+
+    # 2. Module selection menu (the exciting part — pick what to monitor first)
+    selected_modules = _module_selection_menu(config)
+
+    # 3. Hostname
     _section_hostname(config)
 
-    # 2. Notifications
+    # 4. Notifications
     _section_notifications(config)
-
-    # 3. Module selection menu
-    selected_modules = _module_selection_menu(config)
 
     # All module keys for reference
     all_module_keys = [mod["key"] for mod in MODULES]
 
-    # 4. Detail configuration for each selected module (in menu order)
+    # 5. Detail configuration for each selected module (in menu order)
     for mod in MODULES:
         key = mod["key"]
         if key in selected_modules:
             mod["wizard_fn"](config, from_menu=True)
 
-    # 5. Disable unselected modules
+    # 6. Disable unselected modules
     for key in all_module_keys:
         if key not in selected_modules:
             if key == "autoupdate":
@@ -1286,7 +1332,7 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
                 config.setdefault("checks", {}).setdefault(key, {})
                 config["checks"][key]["enabled"] = False
 
-    # 6. Scheduling
+    # 7. Scheduling
     _section_scheduling(config)
 
 
@@ -1517,7 +1563,11 @@ def _offer_scheduling(config: dict) -> None:
     click.echo(
         "  labwatch is not a daemon — it runs once and exits.\n"
         "  To monitor continuously, you need a cron job (or Task Scheduler\n"
-        "  on Windows) that calls 'labwatch check' on an interval."
+        "  on Windows) that calls 'labwatch check' on an interval.\n"
+        "\n"
+        "  Cron is a built-in Linux tool that runs commands automatically on\n"
+        "  a schedule — like a task scheduler. This lets labwatch check your\n"
+        "  server every few minutes without you having to remember."
     )
 
     # Offer notification test first — good to know it works before scheduling
@@ -1622,7 +1672,7 @@ def _offer_scheduling(config: dict) -> None:
             click.secho(f"  Installed: {line}", fg="green")
 
         if compose_dirs:
-            line = scheduler.add_entry("update", update_interval)
+            line = scheduler.add_entry("docker-update", update_interval)
             click.secho(f"  Installed: {line}", fg="green")
 
         click.echo()
@@ -1635,7 +1685,7 @@ def _offer_scheduling(config: dict) -> None:
         for interval, modules in schedule_plan:
             click.echo(f"    labwatch schedule check --every {interval} --only {','.join(modules)}")
         if compose_dirs:
-            click.echo(f"    labwatch schedule update --every {update_interval}")
+            click.echo(f"    labwatch schedule docker-update --every {update_interval}")
 
     _print_done()
 

@@ -288,10 +288,14 @@ class TestWizardFullFlow:
         _, kwargs = mock_sys.call_args
         assert kwargs.get("from_menu") is True
 
-    def test_menu_flow_calls_hostname_and_notifications_first(self, tmp_path):
-        """Hostname and notifications should run before the module menu."""
+    def test_menu_flow_runs_modules_then_hostname_then_notifications(self, tmp_path):
+        """Module selection should run first, then hostname and notifications."""
         cfg_path = tmp_path / "config.yaml"
         call_order = []
+
+        def track_menu(config):
+            call_order.append("module_selection")
+            return []
 
         def track_host(config):
             call_order.append("hostname")
@@ -299,7 +303,7 @@ class TestWizardFullFlow:
         def track_notif(config):
             call_order.append("notifications")
 
-        with patch("labwatch.wizard._module_selection_menu", return_value=[]), \
+        with patch("labwatch.wizard._module_selection_menu", side_effect=track_menu), \
              patch("labwatch.wizard._section_hostname", side_effect=track_host), \
              patch("labwatch.wizard._section_notifications", side_effect=track_notif), \
              patch("labwatch.wizard._section_scheduling"):
@@ -307,7 +311,7 @@ class TestWizardFullFlow:
             runner = CliRunner()
             runner.invoke(cli, ["--config", str(cfg_path), "init"])
 
-        assert call_order == ["hostname", "notifications"]
+        assert call_order == ["module_selection", "hostname", "notifications"]
 
 
 # ---------------------------------------------------------------------------

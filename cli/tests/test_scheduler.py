@@ -160,14 +160,14 @@ class TestRemoveEntries:
         existing = (
             "*/5 * * * * /usr/bin/labwatch check # labwatch:check\n"
             "*/1 * * * * /usr/bin/labwatch check --only network # labwatch:check:network\n"
-            "0 0 * * * /usr/bin/labwatch update # labwatch:update\n"
+            "0 0 * * * /usr/bin/labwatch docker-update # labwatch:docker-update\n"
         )
         stored, fake_run = _mock_crontab(existing)
         mock_run.side_effect = fake_run
 
         removed = remove_entries("check")
         assert removed == 2
-        # Only update entry should remain
+        # Only docker-update entry should remain
         remaining = stored["content"].strip().splitlines()
         assert len(remaining) == 1
-        assert "update" in remaining[0]
+        assert "docker-update" in remaining[0]
