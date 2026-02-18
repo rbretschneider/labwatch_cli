@@ -19,7 +19,8 @@
       "Bash(python3 -m pytest:*)",
       "Bash(find:*)",
       "Bash(xargs:*)",
-      "WebFetch(domain:pypi.org)"
+      "WebFetch(domain:pypi.org)",
+      "Bash(git add:*)"
     ]
   }
 }

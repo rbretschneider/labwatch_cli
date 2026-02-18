@@ -418,6 +418,22 @@ def schedule_update(ctx, every):
         raise SystemExit(1)
 
 
+@schedule_group.command("self-update")
+@click.option("--every", required=True, help="Interval (e.g. 1d, 1w).")
+@click.pass_context
+def schedule_self_update(ctx, every):
+    """Schedule automatic labwatch self-updates via cron."""
+    from labwatch import scheduler
+
+    console = _get_console(ctx)
+    try:
+        line = scheduler.add_entry("self-update", every)
+        console.print(f"[green]\u2714[/green] Scheduled: {line}")
+    except (ValueError, RuntimeError) as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+
+
 @schedule_group.command("list")
 @click.pass_context
 def schedule_list(ctx):
