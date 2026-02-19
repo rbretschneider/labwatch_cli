@@ -805,19 +805,31 @@ def update_cmd(ctx):
     current = __version__
 
     console.print(f"[bold]Current version:[/bold] {current}")
-    console.print("Checking PyPI for updates...")
+    console.print("Checking for updates...")
 
-    # Query PyPI directly for the latest version.  A timestamp query parameter
-    # cache-busts PyPI's Fastly CDN so we always hit the origin server instead
-    # of getting a stale cached response after a recent publish.
+    # Check GitHub tags for the latest version — updates instantly on push,
+    # unlike PyPI's CDN which can lag by several minutes.
+    latest = None
     try:
-        url = f"https://pypi.org/pypi/labwatch/json?_t={int(time.time())}"
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            latest = json.loads(resp.read())["info"]["version"]
-    except Exception as e:
-        console.print(f"[red]Failed to check PyPI:[/red] {e}")
-        raise SystemExit(1)
+        url = "https://api.github.com/repos/rbretschneider/labwatch_cli/tags?per_page=1"
+        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            tags = json.loads(resp.read())
+        if tags:
+            latest = tags[0]["name"].lstrip("v")
+    except Exception:
+        pass
+
+    # Fallback to PyPI JSON API if GitHub check failed
+    if not latest:
+        try:
+            url = "https://pypi.org/pypi/labwatch/json"
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                latest = json.loads(resp.read())["info"]["version"]
+        except Exception as e:
+            console.print(f"[red]Failed to check for updates:[/red] {e}")
+            raise SystemExit(1)
 
     if latest == current:
         console.print(f"[green]\u2714[/green] Already up to date ({current})")
@@ -825,17 +837,16 @@ def update_cmd(ctx):
 
     console.print(f"Updating to {latest}...")
 
-    # PyPI's JSON API may propagate a new version before the package index
-    # (Simple API) that pip uses for downloads.  Retry a few times if pip
-    # can't find the version yet.
+    # PyPI's package index may lag behind GitHub tags by a few minutes.
+    # Retry with increasing delays until the package is available.
     pip_cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", f"labwatch=={latest}"]
-    for attempt in range(3):
+    for attempt in range(4):
         result = subprocess.run(pip_cmd, capture_output=True, text=True)
         if result.returncode == 0:
             break
-        if "No matching distribution" in (result.stderr or "") and attempt < 2:
+        if "No matching distribution" in (result.stderr or "") and attempt < 3:
             wait = 5 * (attempt + 1)
-            console.print(f"  Package index not updated yet, retrying in {wait}s...")
+            console.print(f"  Waiting for PyPI to sync ({wait}s)...")
             time.sleep(wait)
             continue
         console.print(f"[red]Update failed:[/red]")
