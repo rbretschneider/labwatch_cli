@@ -105,6 +105,12 @@ CHECK_DESCRIPTIONS = {
         "  levels from sysfs. Alerts on failing health, high temperatures,\n"
         "  excessive wear, or reallocated sectors."
     ),
+    "system_update": (
+        "Automatically runs apt-get update && apt-get upgrade (or dist-upgrade)\n"
+        "  to keep your Debian/DietPi server fully patched. Optionally runs\n"
+        "  autoremove to clean up unused packages and can auto-reboot when\n"
+        "  a kernel update requires it."
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -159,6 +165,8 @@ def _module_selection_menu(config: dict) -> List[str]:
         # Determine current enabled state from config
         if key == "autoupdate":
             is_enabled = bool(config.get("update", {}).get("compose_dirs", []))
+        elif key == "system_update":
+            is_enabled = config.get("update", {}).get("system", {}).get("enabled", False)
         else:
             is_enabled = config.get("checks", {}).get(key, {}).get("enabled", mod["default_enabled"])
 
@@ -220,10 +228,13 @@ def _module_selection_fallback(config: dict) -> List[str]:
 
         if key == "autoupdate":
             is_enabled = bool(config.get("update", {}).get("compose_dirs", []))
+        elif key == "system_update":
+            is_enabled = config.get("update", {}).get("system", {}).get("enabled", False)
         else:
             is_enabled = config.get("checks", {}).get(key, {}).get("enabled", mod["default_enabled"])
 
-        if click.confirm(f"  Enable {label} ({desc})?", default=is_enabled):
+        state = "enabled" if is_enabled else "disabled"
+        if _prompt_yn(f"  {label} ({desc}) [{state}]", default=is_enabled):
             selected.append(key)
     return selected
 
@@ -247,6 +258,7 @@ SECTION_ORDER: List[str] = [
     "updates",
     "command",
     "autoupdate",
+    "system_update",
     "scheduling",
 ]
 
@@ -280,6 +292,23 @@ def _review_existing_list(
     if r.strip().lower() == "n":
         return []
     return list(items)
+
+
+def _prompt_yn(text: str, *, default: bool) -> bool:
+    """Yes/no prompt where Enter accepts the default.
+
+    Shows '(Enter = yes, n to decline)' or '(Enter = no, y to confirm)'
+    so the user always knows what pressing Enter does.
+    """
+    if default:
+        hint = "Enter = yes, 'n' to decline"
+    else:
+        hint = "Enter = no, 'y' to confirm"
+    r = click.prompt(f"{text}  ({hint})", default="", show_default=False)
+    r = r.strip().lower()
+    if not r:
+        return default
+    return r in ("y", "yes")
 
 
 def _confirm_enable(label: str, current: bool) -> bool:
@@ -514,8 +543,8 @@ def _section_docker(config: dict, *, from_menu: bool = False) -> None:
         "  Disable if you intentionally keep some containers stopped.",
         dim=True,
     )
-    watch_stopped = click.confirm(
-        "  Alert on stopped containers?",
+    watch_stopped = _prompt_yn(
+        f"  Alert on stopped containers? [{'yes' if existing_ws else 'no'}]",
         default=existing_ws,
     )
 
@@ -577,7 +606,7 @@ def _section_http(config: dict, *, from_menu: bool = False) -> None:
                 for i, s in enumerate(suggestions, 1):
                     click.echo(f"  {i}. {s['name']} ({s['url']})")
 
-                if click.confirm("Add these suggested endpoints?", default=True):
+                if _prompt_yn("  Add these suggested endpoints?", default=True):
                     config["checks"]["http"]["endpoints"].extend(suggestions)
 
     if http_enabled:
@@ -586,7 +615,7 @@ def _section_http(config: dict, *, from_menu: bool = False) -> None:
             "  HTTP request and alert if it gets no response or a 4xx/5xx error.",
             dim=True,
         )
-        while click.confirm("Add a custom HTTP endpoint?", default=False):
+        while _prompt_yn("  Add a custom HTTP endpoint?", default=False):
             name = click.prompt("  Endpoint name (a label for this check)")
             url = click.prompt("  URL (e.g. http://localhost:8080/health)")
             timeout = click.prompt(
@@ -662,8 +691,8 @@ def _section_nginx(config: dict, *, from_menu: bool = False) -> None:
             "  alerts. You can always run 'sudo nginx -t' manually instead.",
             dim=True,
         )
-        config_test = click.confirm(
-            "  Enable nginx config test (nginx -t)?",
+        config_test = _prompt_yn(
+            f"  Enable nginx config test (nginx -t)? [{'yes' if existing_config_test else 'no'}]",
             default=existing_config_test,
         )
         config["checks"]["nginx"]["config_test"] = config_test
@@ -673,7 +702,7 @@ def _section_nginx(config: dict, *, from_menu: bool = False) -> None:
             "  each one and alert if it's unreachable or returns an error.",
             dim=True,
         )
-        while click.confirm("  Add an Nginx endpoint URL to monitor?", default=False):
+        while _prompt_yn("  Add an Nginx endpoint URL to monitor?", default=False):
             url = click.prompt("    URL (e.g. https://mydomain.com)")
             config["checks"]["nginx"]["endpoints"].append(url.strip())
 
@@ -979,8 +1008,8 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
             "  the Google Home Cloud API endpoint is reachable.",
             dim=True,
         )
-        config["checks"]["home_assistant"]["google_home"] = click.confirm(
-            "  Check Google Home API connectivity?",
+        config["checks"]["home_assistant"]["google_home"] = _prompt_yn(
+            f"  Check Google Home API connectivity? [{'yes' if existing_gh else 'no'}]",
             default=existing_gh,
         )
 
@@ -1047,15 +1076,15 @@ def _section_systemd(config: dict, *, from_menu: bool = False) -> None:
                 base = u["unit"].replace(".service", "")
                 click.echo(f"    {i}. {base} — {u['label']}")
 
-            if click.confirm("  Add all detected services?", default=True):
+            if _prompt_yn("  Add all detected services?", default=True):
                 for u in known_active:
                     base = u["unit"].replace(".service", "")
                     already.add(base)
                     config["checks"]["systemd"]["units"].append(base)
-            elif click.confirm("  Pick individually?", default=True):
+            elif _prompt_yn("  Pick individually?", default=True):
                 for u in known_active:
                     base = u["unit"].replace(".service", "")
-                    if click.confirm(f"    Monitor {base} ({u['label']})?", default=True):
+                    if _prompt_yn(f"    Monitor {base} ({u['label']})?", default=True):
                         already.add(base)
                         config["checks"]["systemd"]["units"].append(base)
 
@@ -1063,13 +1092,13 @@ def _section_systemd(config: dict, *, from_menu: bool = False) -> None:
         other_active = [u for u in discovered
                         if u["label"] is None and u["state"] == "active"
                         and u["unit"].replace(".service", "") not in already]
-        if other_active and click.confirm(
+        if other_active and _prompt_yn(
             f"\n  {len(other_active)} other running service(s) found. Browse them?",
             default=False,
         ):
             for u in other_active:
                 base = u["unit"].replace(".service", "")
-                if click.confirm(f"    Monitor {base}?", default=False):
+                if _prompt_yn(f"    Monitor {base}?", default=False):
                     already.add(base)
                     config["checks"]["systemd"]["units"].append(base)
 
@@ -1271,7 +1300,7 @@ def _section_command(config: dict, *, from_menu: bool = False) -> None:
             "  specific string in the output to consider the check passing.",
             dim=True,
         )
-        while click.confirm("  Add a command check?", default=not bool(kept)):
+        while _prompt_yn("  Add a command check?", default=not bool(kept)):
             cmd_name = click.prompt("    Check name (a label for this check)")
             cmd_command = click.prompt("    Shell command to run (e.g. 'curl -sf http://...')")
             cmd_expect = click.prompt(
@@ -1318,6 +1347,71 @@ def _section_autoupdate(config: dict, *, from_menu: bool = False) -> None:
         pass
 
 
+def _section_system_update(config: dict, *, from_menu: bool = False) -> None:
+    click.echo()
+    click.secho("System updates (apt-get)", bold=True)
+    _print_description("system_update")
+
+    existing = config.get("update", {}).get("system", {})
+
+    if from_menu:
+        su_enabled = True
+    else:
+        su_enabled = _confirm_enable(
+            "automated system updates",
+            existing.get("enabled", False),
+        )
+
+    config.setdefault("update", {})
+    config["update"].setdefault("system", {})
+    config["update"]["system"]["enabled"] = su_enabled
+
+    if not su_enabled:
+        return
+
+    existing_mode = existing.get("mode", "safe")
+    existing_autoremove = existing.get("autoremove", True)
+    existing_auto_reboot = existing.get("auto_reboot", False)
+
+    if "mode" in existing and _keep_current("system update settings", [
+        f"mode: {existing_mode} ({'apt-get upgrade' if existing_mode == 'safe' else 'apt-get dist-upgrade'})",
+        f"autoremove: {'yes' if existing_autoremove else 'no'}",
+        f"auto-reboot: {'yes' if existing_auto_reboot else 'no'}",
+    ]):
+        config["update"]["system"]["mode"] = existing_mode
+        config["update"]["system"]["autoremove"] = existing_autoremove
+        config["update"]["system"]["auto_reboot"] = existing_auto_reboot
+        return
+
+    click.secho(
+        "  'safe' runs apt-get upgrade (never removes packages or installs\n"
+        "  new ones). 'full' runs apt-get dist-upgrade (may remove/install\n"
+        "  packages as needed for major upgrades).",
+        dim=True,
+    )
+    mode = click.prompt(
+        "  Update mode",
+        type=click.Choice(["safe", "full"]),
+        default=existing_mode,
+    )
+    config["update"]["system"]["mode"] = mode
+
+    config["update"]["system"]["autoremove"] = _prompt_yn(
+        f"  Run autoremove after upgrade? [{'yes' if existing_autoremove else 'no'}]",
+        default=existing_autoremove,
+    )
+
+    click.secho(
+        "  Auto-reboot will schedule 'shutdown -r +1' if a kernel update\n"
+        "  requires a reboot. The 1-minute delay lets notifications send first.",
+        dim=True,
+    )
+    config["update"]["system"]["auto_reboot"] = _prompt_yn(
+        f"  Auto-reboot when required? [{'yes' if existing_auto_reboot else 'no'}]",
+        default=existing_auto_reboot,
+    )
+
+
 def _section_scheduling(config: dict) -> None:
     _offer_scheduling(config)
 
@@ -1341,6 +1435,7 @@ SECTION_FUNCTIONS: Dict[str, Callable] = {
     "updates": _section_updates,
     "command": _section_command,
     "autoupdate": _section_autoupdate,
+    "system_update": _section_system_update,
     "scheduling": _section_scheduling,
 }
 
@@ -1470,6 +1565,14 @@ MODULES.extend([
         "wizard_fn": _section_autoupdate,
         "config_path": "update.compose_dirs",
     },
+    {
+        "key": "system_update",
+        "label": "System updates",
+        "short_desc": "automated apt-get upgrade (Debian/DietPi)",
+        "default_enabled": False,
+        "wizard_fn": _section_system_update,
+        "config_path": "update.system",
+    },
 ])
 
 
@@ -1569,6 +1672,9 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
             if key == "autoupdate":
                 config.setdefault("update", {})
                 config["update"]["compose_dirs"] = []
+            elif key == "system_update":
+                config.setdefault("update", {}).setdefault("system", {})
+                config["update"]["system"]["enabled"] = False
             else:
                 config.setdefault("checks", {}).setdefault(key, {})
                 config["checks"][key]["enabled"] = False
@@ -1586,11 +1692,11 @@ def _configure_auto_updates(config: dict) -> None:
         for i, (project, working_dir) in enumerate(compose_projects, 1):
             click.echo(f"  {i}. {project} ({working_dir})")
 
-        if click.confirm("\nInclude all for auto-updates?", default=True):
+        if _prompt_yn("\n  Include all for auto-updates?", default=True):
             config["update"]["compose_dirs"] = [d for _, d in compose_projects]
         else:
             for project, working_dir in compose_projects:
-                if click.confirm(f"  Include {project} ({working_dir})?", default=False):
+                if _prompt_yn(f"  Include {project} ({working_dir})?", default=False):
                     config["update"]["compose_dirs"].append(working_dir)
     else:
         if compose_projects is None:
@@ -1606,7 +1712,7 @@ def _configure_auto_updates(config: dict) -> None:
             _scan_base_dir(config, base_dir.strip())
 
     # Always offer manual additions
-    while click.confirm("Add additional directories manually?", default=False):
+    while _prompt_yn("  Add additional directories manually?", default=False):
         dir_path = click.prompt("  Compose directory")
         if dir_path.strip():
             config["update"]["compose_dirs"].append(dir_path.strip())
@@ -1639,11 +1745,11 @@ def _scan_base_dir(config: dict, base_dir: str) -> None:
     for d in found:
         click.echo(f"    {d}")
 
-    if click.confirm("  Include all?", default=True):
+    if _prompt_yn("  Include all?", default=True):
         config["update"]["compose_dirs"].extend(found)
     else:
         for d in found:
-            if click.confirm(f"  Include {d}?", default=False):
+            if _prompt_yn(f"  Include {d}?", default=False):
                 config["update"]["compose_dirs"].append(d)
 
 
@@ -1720,7 +1826,7 @@ def _offer_notification_test(config: dict) -> None:
         "  Send a test alert to verify your ntfy setup is working.",
         dim=True,
     )
-    if not click.confirm("Send a test notification now?", default=True):
+    if not _prompt_yn("  Send a test notification now?", default=True):
         click.echo("  Skipped. You can test later with: labwatch notify 'Test' 'Hello from labwatch'")
         return
 
@@ -1817,6 +1923,7 @@ def _offer_scheduling(config: dict) -> None:
     # Build the recommended schedule from enabled checks
     checks = config.get("checks", {})
     compose_dirs = config.get("update", {}).get("compose_dirs", [])
+    system_update_enabled = config.get("update", {}).get("system", {}).get("enabled", False)
 
     # (interval, label, modules, choices) — only tiers with enabled checks
     active_tiers: List[Tuple[str, str, List[str], List[Tuple[str, str]]]] = []
@@ -1825,7 +1932,7 @@ def _offer_scheduling(config: dict) -> None:
         if enabled_in_tier:
             active_tiers.append((default_interval, label, enabled_in_tier, choices))
 
-    if not active_tiers and not compose_dirs:
+    if not active_tiers and not compose_dirs and not system_update_enabled:
         click.echo()
         click.echo("  No checks enabled — nothing to schedule.")
         _print_done()
@@ -1837,7 +1944,9 @@ def _offer_scheduling(config: dict) -> None:
     for interval, label, modules, _choices in active_tiers:
         click.echo(f"    {label:14s}  labwatch check --only {','.join(modules)}")
     if compose_dirs:
-        click.echo(f"    {'daily':14s}  labwatch update")
+        click.echo(f"    {'daily':14s}  labwatch docker-update")
+    if system_update_enabled:
+        click.echo(f"    {'daily':14s}  labwatch system-update")
 
     # On Windows, we can't install cron — just print the commands
     if sys.platform == "win32":
@@ -1849,12 +1958,15 @@ def _offer_scheduling(config: dict) -> None:
 
     # Three-way choice: accept / customize / none
     click.echo()
+    click.echo("  [A] Accept recommended schedule  (Enter = A)")
+    click.echo("  [C] Customize intervals")
+    click.echo("  [N] Skip — set up later")
     choice = click.prompt(
-        "  Schedule checks",
+        "  Choice",
         type=click.Choice(["A", "C", "N"], case_sensitive=False),
         default="A",
         show_choices=False,
-        prompt_suffix="? [A]ccept recommended / [C]ustomize / [N]one: ",
+        prompt_suffix=" (Enter = Accept): ",
     ).upper()
 
     if choice == "N":
@@ -1863,7 +1975,9 @@ def _offer_scheduling(config: dict) -> None:
         for interval, _label, modules, _choices in active_tiers:
             click.echo(f"    labwatch schedule check --every {interval} --only {','.join(modules)}")
         if compose_dirs:
-            click.echo(f"    labwatch schedule update --every 1d")
+            click.echo(f"    labwatch schedule docker-update --every 1d")
+        if system_update_enabled:
+            click.echo(f"    labwatch schedule system-update --every 1d")
         click.echo(f"    labwatch schedule list    # see what's installed")
         _print_done()
         return
@@ -1872,6 +1986,7 @@ def _offer_scheduling(config: dict) -> None:
     # schedule_plan: list of (interval, modules_list)
     schedule_plan: List[Tuple[str, List[str]]] = []
     update_interval = "1d"
+    system_update_interval = "1d"
 
     if choice == "C":
         click.echo()
@@ -1889,7 +2004,7 @@ def _offer_scheduling(config: dict) -> None:
             schedule_plan.append((selected_interval, modules))
 
         if compose_dirs:
-            click.echo(f"  Auto-updates:")
+            click.echo(f"  Docker auto-updates:")
             for i, (intv, desc) in enumerate(_UPDATE_CHOICES, 1):
                 click.echo(f"    [{i}] {desc}")
             idx = click.prompt(
@@ -1898,6 +2013,17 @@ def _offer_scheduling(config: dict) -> None:
                 default=1,
             )
             update_interval = _UPDATE_CHOICES[idx - 1][0]
+
+        if system_update_enabled:
+            click.echo(f"  System updates:")
+            for i, (intv, desc) in enumerate(_UPDATE_CHOICES, 1):
+                click.echo(f"    [{i}] {desc}")
+            idx = click.prompt(
+                "    Choice",
+                type=click.IntRange(1, len(_UPDATE_CHOICES)),
+                default=1,
+            )
+            system_update_interval = _UPDATE_CHOICES[idx - 1][0]
     else:
         # Accept recommended
         for default_interval, _label, modules, _choices in active_tiers:
@@ -1916,6 +2042,10 @@ def _offer_scheduling(config: dict) -> None:
             line = scheduler.add_entry("docker-update", update_interval)
             click.secho(f"  Installed: {line}", fg="green")
 
+        if system_update_enabled:
+            line = scheduler.add_entry("system-update", system_update_interval)
+            click.secho(f"  Installed: {line}", fg="green")
+
         click.echo()
         click.secho("Cron schedule installed.", fg="green", bold=True)
         click.echo("  labwatch schedule list     # view installed entries")
@@ -1927,6 +2057,8 @@ def _offer_scheduling(config: dict) -> None:
             click.echo(f"    labwatch schedule check --every {interval} --only {','.join(modules)}")
         if compose_dirs:
             click.echo(f"    labwatch schedule docker-update --every {update_interval}")
+        if system_update_enabled:
+            click.echo(f"    labwatch schedule system-update --every {system_update_interval}")
 
     _print_done()
 

@@ -280,14 +280,50 @@ class TestConfigTreeDisabledList:
 class TestConfigTreeAutoUpdates:
     def test_compose_dirs_listed(self, full_cfg):
         text = _render(full_cfg)
-        assert "Auto-updates" in text
+        assert "Docker auto-updates" in text
         assert "2 directories" in text
         assert "/opt/stacks/media" in text
         assert "/opt/stacks/monitoring" in text
 
     def test_no_compose_dirs(self, default_cfg):
         text = _render(default_cfg)
-        assert "Auto-updates" not in text
+        assert "Docker auto-updates" not in text
+
+
+class TestConfigTreeSystemUpdates:
+    def test_system_update_enabled_safe(self, full_cfg):
+        full_cfg["update"]["system"] = {
+            "enabled": True, "mode": "safe",
+            "autoremove": True, "auto_reboot": False,
+        }
+        text = _render(full_cfg)
+        assert "System updates (apt-get upgrade)" in text
+        assert "mode: safe" in text
+        assert "autoremove: yes" in text
+        assert "auto-reboot" not in text
+
+    def test_system_update_enabled_full(self, full_cfg):
+        full_cfg["update"]["system"] = {
+            "enabled": True, "mode": "full",
+            "autoremove": True, "auto_reboot": True,
+        }
+        text = _render(full_cfg)
+        assert "System updates (apt-get dist-upgrade)" in text
+        assert "mode: full" in text
+        assert "auto-reboot: enabled" in text
+
+    def test_system_update_disabled(self, full_cfg):
+        full_cfg["update"]["system"] = {"enabled": False, "mode": "safe"}
+        text = _render(full_cfg)
+        assert "System updates" not in text
+
+    def test_system_update_no_autoremove(self, full_cfg):
+        full_cfg["update"]["system"] = {
+            "enabled": True, "mode": "safe",
+            "autoremove": False, "auto_reboot": False,
+        }
+        text = _render(full_cfg)
+        assert "autoremove" not in text
 
 
 class TestSummarizeCliCommand:

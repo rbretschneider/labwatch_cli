@@ -103,6 +103,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "update": {
         "compose_dirs": [],
+        "system": {
+            "enabled": False,
+            "mode": "safe",
+            "autoremove": True,
+            "auto_reboot": False,
+        },
     },
 }
 
@@ -343,5 +349,18 @@ def validate_config(config: Dict[str, Any]) -> list:
         for i, d in enumerate(compose_dirs):
             if not isinstance(d, str) or not d.strip():
                 errors.append(f"update.compose_dirs[{i}] must be a non-empty string")
+
+    # Validate update.system
+    sys_update = config.get("update", {}).get("system", {})
+    if sys_update.get("enabled"):
+        mode = sys_update.get("mode", "safe")
+        if mode not in ("safe", "full"):
+            errors.append(
+                f"update.system.mode must be 'safe' or 'full', got '{mode}'"
+            )
+        if not isinstance(sys_update.get("autoremove", True), bool):
+            errors.append("update.system.autoremove must be a boolean")
+        if not isinstance(sys_update.get("auto_reboot", False), bool):
+            errors.append("update.system.auto_reboot must be a boolean")
 
     return errors

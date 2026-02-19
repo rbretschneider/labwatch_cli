@@ -1,6 +1,6 @@
 # labwatch
 
-General-purpose homelab monitoring CLI. Checks system resources, Docker containers, HTTP endpoints, Nginx, DNS, systemd units, network interfaces, processes, package updates, and more — with push notifications via [ntfy](https://ntfy.sh) and built-in cron scheduling.
+General-purpose homelab monitoring CLI. Checks system resources, Docker containers, HTTP endpoints, Nginx, DNS, systemd units, network interfaces, processes, package updates, and more — with push notifications via [ntfy](https://ntfy.sh), built-in cron scheduling, and automated Docker Compose and system package updates.
 
 ## Install
 
@@ -57,16 +57,19 @@ The `labwatch init` wizard handles everything: config generation, notification t
 | `labwatch check --only system,docker` | Run specific check modules |
 | `labwatch check --json` | JSON output for scripting/cron |
 | `labwatch discover` | List Docker containers, suggest endpoints |
-| `labwatch update` | Pull latest Docker images, restart changed services |
-| `labwatch update --dry-run` | Preview what would be updated |
-| `labwatch update --force` | Update even version-pinned tags |
+| `labwatch docker-update` | Pull latest Docker images, restart changed services |
+| `labwatch docker-update --dry-run` | Preview what would be updated |
+| `labwatch docker-update --force` | Update even version-pinned tags |
+| `labwatch system-update` | Run apt-get upgrade on Debian/DietPi systems |
+| `labwatch system-update --dry-run` | Show upgradable packages without installing |
 | `labwatch notify "Title" "Message"` | Send a one-off notification |
 | `labwatch summarize` | Show config summary as a Rich tree |
 | `labwatch validate` | Validate config file |
 | `labwatch edit` | Open config in your default editor ($EDITOR) |
 | `labwatch schedule check --every 5m` | Schedule checks to cron |
 | `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
-| `labwatch schedule update --every 1d` | Schedule Docker Compose updates |
+| `labwatch schedule docker-update --every 1d` | Schedule Docker Compose updates |
+| `labwatch schedule system-update --every 1d` | Schedule system package updates |
 | `labwatch schedule list` | Show all labwatch cron entries |
 | `labwatch schedule remove` | Remove labwatch cron entries |
 | `labwatch enable docker` | Enable a check module |
@@ -74,7 +77,7 @@ The `labwatch init` wizard handles everything: config generation, notification t
 | `labwatch motd` | Plain-text login summary for SSH MOTD |
 | `labwatch version` | Show version |
 
-Global options: `--config PATH`, `--no-color`, `--verbose`
+Global options: `--config PATH`, `--no-color`, `--verbose`, `--quiet`
 
 ## What It Monitors
 
@@ -107,7 +110,8 @@ labwatch is not a daemon — it runs once and exits. The `labwatch init` wizard 
 labwatch schedule check --only network --every 1m
 labwatch schedule check --only http,dns,nginx --every 5m
 labwatch schedule check --only system,docker --every 30m
-labwatch schedule update --every 1w
+labwatch schedule docker-update --every 1w
+labwatch schedule system-update --every 1d
 labwatch schedule list
 ```
 
@@ -116,10 +120,21 @@ labwatch schedule list
 The wizard auto-detects Compose projects from running containers via Docker labels (`com.docker.compose.project.working_dir`). You can also scan a base directory or add paths manually.
 
 ```bash
-labwatch update --dry-run    # preview
-labwatch update              # pull and restart
-labwatch update --force      # include pinned tags
+labwatch docker-update --dry-run    # preview
+labwatch docker-update              # pull and restart
+labwatch docker-update --force      # include pinned tags
 ```
+
+## System Package Updates
+
+Automates `apt-get upgrade` (or `dist-upgrade`) on Debian-based systems. Configure via the wizard or manually in `update.system`:
+
+```bash
+labwatch system-update --dry-run    # preview upgradable packages
+sudo labwatch system-update         # run the upgrade (requires root)
+```
+
+Modes: `safe` (apt-get upgrade, default) or `full` (apt-get dist-upgrade). Optional autoremove and auto-reboot after kernel updates.
 
 ## License
 

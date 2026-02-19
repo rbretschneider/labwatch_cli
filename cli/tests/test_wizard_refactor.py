@@ -167,9 +167,9 @@ class TestModuleSelectionFallback:
     def test_fallback_returns_selected_modules(self):
         """Fallback should return keys for confirmed modules."""
         config = copy.deepcopy(DEFAULT_CONFIG)
-        # Confirm first three (system, docker, http), deny the rest
-        responses = [True, True, True] + [False] * (len(MODULES) - 3)
-        with patch("labwatch.wizard.click.confirm", side_effect=responses), \
+        # "y" selects first three (system, docker, http), "n" denies the rest
+        responses = ["y", "y", "y"] + ["n"] * (len(MODULES) - 3)
+        with patch("labwatch.wizard.click.prompt", side_effect=responses), \
              patch("labwatch.wizard.click.echo"), \
              patch("labwatch.wizard.click.secho"):
             selected = _module_selection_fallback(config)
@@ -181,7 +181,7 @@ class TestModuleSelectionFallback:
 
     def test_fallback_all_denied(self):
         config = copy.deepcopy(DEFAULT_CONFIG)
-        with patch("labwatch.wizard.click.confirm", return_value=False), \
+        with patch("labwatch.wizard.click.prompt", return_value="n"), \
              patch("labwatch.wizard.click.echo"), \
              patch("labwatch.wizard.click.secho"):
             selected = _module_selection_fallback(config)
@@ -198,7 +198,7 @@ class TestFromMenuParam:
     _module_fns = [
         "system", "docker", "http", "nginx", "smart", "dns", "certs",
         "ping", "home_assistant", "systemd", "process", "network",
-        "updates", "command", "autoupdate",
+        "updates", "command", "autoupdate", "system_update",
     ]
 
     def test_section_functions_accept_from_menu(self):

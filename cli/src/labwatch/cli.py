@@ -298,6 +298,66 @@ def docker_update_cmd(ctx, force, dry_run):
             console.print("[dim]Notifications sent.[/dim]")
 
 
+@cli.command("system-update")
+@click.option("--dry-run", is_flag=True, help="Show upgradable packages without installing.")
+@click.pass_context
+def system_update_cmd(ctx, dry_run):
+    """Run apt-get upgrade on Debian/DietPi systems."""
+    from labwatch.system_updater import SystemUpdater
+
+    console = _get_console(ctx)
+    cfg = _get_config(ctx)
+
+    sys_cfg = cfg.get("update", {}).get("system", {})
+    if not sys_cfg.get("enabled"):
+        console.print(
+            "[red]System updates are not enabled.[/red]\n"
+            "Enable them in your config under update.system.enabled, "
+            "or run [bold]labwatch init[/bold]."
+        )
+        raise SystemExit(1)
+
+    if dry_run:
+        console.print("[dim]Dry run — no changes will be made.[/dim]")
+
+    updater = SystemUpdater(cfg, dry_run=dry_run)
+    result = updater.run()
+
+    if result.error:
+        console.print(f"[red]Error:[/red] {result.error}")
+        updater.notify(result)
+        raise SystemExit(1)
+
+    if result.dry_run:
+        if result.packages_upgraded:
+            console.print(f"[bold]{len(result.packages_upgraded)} package(s) upgradable:[/bold]")
+            for pkg in result.packages_upgraded:
+                console.print(f"  {pkg}")
+        else:
+            console.print("[green]System is up to date.[/green]")
+        return
+
+    if result.packages_upgraded:
+        console.print(f"[green]\u2714[/green] {len(result.packages_upgraded)} package(s) upgraded")
+    else:
+        console.print("[green]\u2714[/green] System is up to date")
+
+    if result.packages_removed:
+        console.print(f"  {len(result.packages_removed)} package(s) auto-removed")
+
+    if result.rebooting:
+        console.print("[yellow]Reboot scheduled in 1 minute.[/yellow]")
+    elif result.reboot_required:
+        console.print("[yellow]Reboot required.[/yellow]")
+
+    updater.notify(result)
+    if ctx.obj.get("verbose"):
+        console.print("[dim]Notifications sent.[/dim]")
+
+    if result.rebooting:
+        updater.do_reboot()
+
+
 @cli.group("schedule")
 def schedule_group():
     """Manage labwatch cron schedule entries."""
@@ -338,6 +398,22 @@ def schedule_docker_update(ctx, every):
     console = _get_console(ctx)
     try:
         line = scheduler.add_entry("docker-update", every)
+        console.print(f"[green]\u2714[/green] Scheduled: {line}")
+    except (ValueError, RuntimeError) as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+
+
+@schedule_group.command("system-update")
+@click.option("--every", required=True, help="Interval (e.g. 1d, 1w).")
+@click.pass_context
+def schedule_system_update(ctx, every):
+    """Schedule periodic system package updates via cron."""
+    from labwatch import scheduler
+
+    console = _get_console(ctx)
+    try:
+        line = scheduler.add_entry("system-update", every)
         console.print(f"[green]\u2714[/green] Scheduled: {line}")
     except (ValueError, RuntimeError) as e:
         console.print(f"[red]{e}[/red]")
@@ -534,12 +610,24 @@ def _build_config_tree(cfg: dict) -> Tree:
     if disabled_modules:
         tree.add(f"[dim]Disabled: {', '.join(disabled_modules)}[/dim]")
 
-    # --- Auto-updates ---
+    # --- Docker auto-updates ---
     compose_dirs = cfg.get("update", {}).get("compose_dirs", [])
     if compose_dirs:
-        upd_branch = tree.add(f"[bold]Auto-updates ({len(compose_dirs)} directories)[/bold]")
+        upd_branch = tree.add(f"[bold]Docker auto-updates ({len(compose_dirs)} directories)[/bold]")
         for d in compose_dirs:
             upd_branch.add(d)
+
+    # --- System updates ---
+    system_update = cfg.get("update", {}).get("system", {})
+    if system_update.get("enabled"):
+        mode = system_update.get("mode", "safe")
+        mode_label = "apt-get upgrade" if mode == "safe" else "apt-get dist-upgrade"
+        su_branch = tree.add(f"[bold]System updates ({mode_label})[/bold]")
+        su_branch.add(f"mode: {mode}")
+        if system_update.get("autoremove", True):
+            su_branch.add("autoremove: yes")
+        if system_update.get("auto_reboot", False):
+            su_branch.add("auto-reboot: enabled")
 
     return tree
 

@@ -128,5 +128,11 @@ def full_cfg():
         },
         "update": {
             "compose_dirs": ["/opt/stacks/media", "/opt/stacks/monitoring"],
+            "system": {
+                "enabled": False,
+                "mode": "safe",
+                "autoremove": True,
+                "auto_reboot": False,
+            },
         },
     }

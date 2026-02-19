@@ -9,14 +9,14 @@
 
 # labwatch
 
-A CLI tool for monitoring your homelab. Tracks system resources, Docker containers, systemd services, VPNs, Nginx, DNS, network interfaces, and more. Schedules checks with cron, sends push notifications on failures via [ntfy](https://ntfy.sh), and can automate Docker Compose image updates.
+A CLI tool for monitoring your homelab. Tracks system resources, Docker containers, systemd services, VPNs, Nginx, DNS, network interfaces, and more. Schedules checks with cron, sends push notifications on failures via [ntfy](https://ntfy.sh), and can automate Docker Compose image updates and system package upgrades.
 
 ## Why labwatch?
 
 Homelabs tend to grow into a sprawl of containers, services, and network configs. Uptime dashboards are great, but they're another thing to host and maintain. labwatch takes a different approach: a single CLI that lives on your server, runs from cron, and pushes alerts to your phone when something breaks.
 
 - No web UI to host. It writes to stdout and pushes to ntfy.
-- Cron-native. Schedule checks and auto-updates with built-in cron management.
+- Cron-native. Schedule checks, Docker image updates, and system package upgrades with built-in cron management.
 - Config-driven. One YAML file defines everything to monitor.
 - Guided setup. The `labwatch init` wizard walks you through every option with detailed explanations, auto-detects Docker containers and systemd services, tests your notifications, and installs your cron schedule.
 - Smart notifications. Deduplicates repeated alerts and sends recovery notices when things come back.
@@ -108,14 +108,15 @@ That's it. The wizard handles config generation, notification testing, and cron 
 
 `labwatch init` is the primary way to configure labwatch. It walks through every section with beginner-friendly explanations — no assumptions about what you already know:
 
-1. **Module selection** — the fun part first. A checkbox menu of all 14 monitoring modules with short descriptions. Pick what matches your setup; skip the rest. You can always come back.
+1. **Module selection** — the fun part first. A checkbox menu of all 16 modules (14 monitoring + Docker auto-updates + system updates) with short descriptions. Pick what matches your setup; skip the rest. You can always come back.
 2. **Hostname** — a friendly name for this machine (shows up in alerts so you know which server is talking)
 3. **Notifications (ntfy)** — explains what ntfy is, why you want push alerts, and walks through server/topic setup
 4. **Module details** — for each module you selected, configures thresholds, endpoints, devices, etc. Systemd monitoring auto-discovers running services and highlights 70+ known homelab services (Pi-hole, WireGuard, CUPS, Tailscale, Plex, etc.) so you can pick from a list instead of typing unit names from memory.
 5. **Docker auto-updates** — auto-detects Compose projects from running containers via Docker labels, or scans a base directory for compose files
-6. **Summary** — shows what you enabled/disabled, your notification target, and auto-update directories
-7. **Notification test** — sends a test alert to verify your ntfy setup works before you rely on it
-8. **Scheduling** — explains what cron is, shows a recommended schedule grouped by frequency, and offers three options:
+6. **System updates** — configures automated `apt-get upgrade` or `dist-upgrade` for Debian/DietPi, with optional autoremove and auto-reboot
+7. **Summary** — shows what you enabled/disabled, your notification target, and auto-update directories
+8. **Notification test** — sends a test alert to verify your ntfy setup works before you rely on it
+9. **Scheduling** — explains what cron is, shows a recommended schedule grouped by frequency, and offers three options:
    - **Accept** the recommended schedule (installs cron entries immediately)
    - **Customize** per check group (choose from sensible frequency options like every 5 min, hourly, daily, weekly)
    - **None** (skip scheduling, print the manual commands for later)
@@ -139,6 +140,8 @@ Use `--config /tmp/test.yaml` to try it without overwriting your real config.
 | `labwatch docker-update` | Pull latest Docker images and restart changed services |
 | `labwatch docker-update --dry-run` | Show what would be updated without pulling |
 | `labwatch docker-update --force` | Update even version-pinned tags |
+| `labwatch system-update` | Run apt-get upgrade on Debian/DietPi systems |
+| `labwatch system-update --dry-run` | Show upgradable packages without installing |
 | `labwatch notify "Title" "Message"` | Send a one-off push notification |
 | `labwatch summarize` | Show config summary as a Rich tree |
 | `labwatch validate` | Validate config file |
@@ -149,6 +152,7 @@ Use `--config /tmp/test.yaml` to try it without overwriting your real config.
 | `labwatch schedule check --every 5m` | Schedule all checks to cron |
 | `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
 | `labwatch schedule docker-update --every 1d` | Add Docker update schedule to cron |
+| `labwatch schedule system-update --every 1d` | Add system update schedule to cron |
 | `labwatch schedule list` | Show all labwatch cron entries |
 | `labwatch schedule remove` | Remove all labwatch cron entries |
 | `labwatch schedule remove --only check` | Remove only check entries |
@@ -219,9 +223,12 @@ my-server
 │       ├── warn at 1+ pending
 │       └── critical at 50+ pending
 ├── Disabled: Nginx, S.M.A.R.T., Network Interfaces, Home Assistant, Processes, Custom Commands
-└── Auto-updates (2 directories)
-    ├── /home/docker/plex
-    └── /home/docker/grafana
+├── Docker auto-updates (2 directories)
+│   ├── /home/docker/plex
+│   └── /home/docker/grafana
+└── System updates (apt-get upgrade)
+    ├── mode: safe
+    └── autoremove: yes
 ```
 
 Run `labwatch init` to regenerate it interactively, or edit by hand:
@@ -340,6 +347,11 @@ update:
   compose_dirs:
     - "/home/docker/plex"
     - "/home/docker/grafana"
+  system:
+    enabled: true
+    mode: "safe"              # "safe" = apt-get upgrade, "full" = apt-get dist-upgrade
+    autoremove: true
+    auto_reboot: false        # set true to auto-reboot after kernel updates
 ```
 
 ### Environment Variables in Config
@@ -400,6 +412,9 @@ labwatch schedule check --only updates --every 1d
 
 # Docker Compose image updates weekly
 labwatch schedule docker-update --every 1w
+
+# System package upgrades daily
+labwatch schedule system-update --every 1d
 
 # See what's scheduled
 labwatch schedule list
@@ -541,6 +556,31 @@ Example output:
 
 The output is plain text with no colors or Rich formatting, so it works in any terminal and won't break non-interactive shells.
 
+## System Package Updates
+
+`labwatch system-update` runs `apt-get update && apt-get upgrade -y` (or `dist-upgrade`) on Debian-based systems. It's designed to keep your servers fully patched without manual SSH sessions.
+
+```bash
+# Preview what would be upgraded
+labwatch system-update --dry-run
+
+# Run the upgrade (requires root)
+sudo labwatch system-update
+
+# Schedule daily upgrades via cron
+labwatch schedule system-update --every 1d
+```
+
+**Modes:**
+- `safe` (default) — runs `apt-get upgrade`, which never removes packages or installs new dependencies
+- `full` — runs `apt-get dist-upgrade`, which may remove or install packages as needed for major upgrades
+
+**Options:**
+- `autoremove` — automatically clean up unused packages after upgrade (default: on)
+- `auto_reboot` — schedule `shutdown -r +1` if a kernel update requires a reboot (default: off). The 1-minute delay lets the notification send first.
+
+Notifications are sent via ntfy on completion, with package counts, error status, and reboot status.
+
 ## Project Goals
 
 - Simple to install and run. `pipx install labwatch` and `labwatch init`, nothing else required.
@@ -548,8 +588,9 @@ The output is plain text with no colors or Rich formatting, so it works in any t
 - Cron-first scheduling. Manage monitoring schedules without external tools.
 - Cover the common homelab stack: system resources, Docker, systemd, VPNs, Nginx, DNS, HTTP endpoints.
 - Granular scheduling. Different check modules can run at different intervals (VPN every minute, Docker every 30 minutes, etc.).
-- Separate concerns. System updates, Docker image updates, and monitoring checks all run on independent schedules.
+- Separate concerns. System package upgrades, Docker image updates, and monitoring checks all run on independent schedules.
 - Automate Docker Compose image updates with auto-detection of Compose projects.
+- Automate system package upgrades with configurable mode, autoremove, and auto-reboot.
 - Smart notifications via ntfy — deduplicated, with recovery alerts.
 - Extensible. Add custom checks via the command module or write new check plugins.
 - Scriptable. JSON output and meaningful exit codes for integration with other tools.
