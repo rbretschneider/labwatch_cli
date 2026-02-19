@@ -252,6 +252,40 @@ class TestAddEntry:
         assert "# labwatch:check\n" in content or content.endswith("# labwatch:check")
         assert "# labwatch:check:network" in content
 
+    # --- use_sudo tests ---
+
+    @patch("labwatch.scheduler.sys.platform", "linux")
+    @patch("labwatch.scheduler.resolve_labwatch_path", return_value="/usr/bin/labwatch")
+    @patch("labwatch.scheduler.subprocess.run")
+    def test_use_sudo_prefixes_command(self, mock_run, mock_path):
+        stored, fake_run = _mock_crontab()
+        mock_run.side_effect = fake_run
+
+        line = add_entry("system-update", "1w", use_sudo=True)
+        assert "sudo /usr/bin/labwatch system-update" in line
+        assert "# labwatch:system-update" in line
+
+    @patch("labwatch.scheduler.sys.platform", "linux")
+    @patch("labwatch.scheduler.resolve_labwatch_path", return_value="/usr/bin/labwatch")
+    @patch("labwatch.scheduler.subprocess.run")
+    def test_use_sudo_false_no_prefix(self, mock_run, mock_path):
+        stored, fake_run = _mock_crontab()
+        mock_run.side_effect = fake_run
+
+        line = add_entry("system-update", "1w", use_sudo=False)
+        assert "sudo" not in line
+        assert "/usr/bin/labwatch system-update" in line
+
+    @patch("labwatch.scheduler.sys.platform", "linux")
+    @patch("labwatch.scheduler.resolve_labwatch_path", return_value="/usr/bin/labwatch")
+    @patch("labwatch.scheduler.subprocess.run")
+    def test_use_sudo_with_modules(self, mock_run, mock_path):
+        stored, fake_run = _mock_crontab()
+        mock_run.side_effect = fake_run
+
+        line = add_entry("check", "5m", modules=["network"], use_sudo=True)
+        assert "sudo /usr/bin/labwatch check --only network" in line
+
     # --- Sentinel block tests ---
 
     @patch("labwatch.scheduler.sys.platform", "linux")

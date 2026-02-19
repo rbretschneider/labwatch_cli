@@ -1,5 +1,6 @@
 """Interactive setup wizard for labwatch."""
 
+import os
 import platform
 import sys
 from pathlib import Path
@@ -1484,6 +1485,58 @@ def _section_autoupdate(config: dict, *, from_menu: bool = False) -> None:
         pass
 
 
+def _warn_if_sudo_needed() -> bool:
+    """If not running as root on Linux, warn that system-update needs sudo.
+
+    Shows the user exactly how to set up passwordless sudo so the cron
+    job can run apt-get as root.  Returns True if sudo is needed.
+    """
+    if sys.platform == "win32":
+        return False
+
+    if os.geteuid() == 0:
+        return False
+
+    import getpass
+    from labwatch.scheduler import resolve_labwatch_path
+
+    username = getpass.getuser()
+    labwatch_path = resolve_labwatch_path()
+
+    click.echo()
+    click.secho(
+        "  Note: system updates require root privileges.",
+        fg="yellow", bold=True,
+    )
+    click.echo(
+        "  You're not running as root, so the cron job will need\n"
+        "  passwordless sudo to run apt-get commands automatically.\n"
+        "\n"
+        "  To set this up, run:"
+    )
+    click.echo()
+    click.secho(
+        f"    sudo visudo -f /etc/sudoers.d/labwatch",
+        bold=True,
+    )
+    click.echo()
+    click.echo("  and add this line:")
+    click.echo()
+    click.secho(
+        f"    {username} ALL=(root) NOPASSWD: {labwatch_path} system-update",
+        bold=True,
+    )
+    click.echo()
+    click.echo(
+        "  This grants only the minimum permission needed -- your user\n"
+        "  can run 'labwatch system-update' as root without a password,\n"
+        "  but nothing else. The scheduled cron entry will use 'sudo'\n"
+        "  automatically."
+    )
+
+    return True
+
+
 def _section_system_update(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("System updates (apt-get)", bold=True)
@@ -1505,6 +1558,8 @@ def _section_system_update(config: dict, *, from_menu: bool = False) -> None:
 
     if not su_enabled:
         return
+
+    _warn_if_sudo_needed()
 
     existing_mode = existing.get("mode", "safe")
     existing_autoremove = existing.get("autoremove", True)
@@ -2066,6 +2121,12 @@ def _offer_scheduling(config: dict) -> None:
     checks = config.get("checks", {})
     compose_dirs = config.get("update", {}).get("compose_dirs", [])
     system_update_enabled = config.get("update", {}).get("system", {}).get("enabled", False)
+    su_needs_sudo = (
+        system_update_enabled
+        and sys.platform != "win32"
+        and os.geteuid() != 0
+    )
+    su_sudo_prefix = "sudo " if su_needs_sudo else ""
 
     # (interval, label, modules, choices) — only tiers with enabled checks
     active_tiers: List[Tuple[str, str, List[str], List[Tuple[str, str]]]] = []
@@ -2088,7 +2149,7 @@ def _offer_scheduling(config: dict) -> None:
     if compose_dirs:
         click.echo(f"    {'daily':14s}  labwatch docker-update")
     if system_update_enabled:
-        click.echo(f"    {'weekly':14s}  labwatch system-update")
+        click.echo(f"    {'weekly':14s}  {su_sudo_prefix}labwatch system-update")
 
     # On Windows, we can't install cron — just print the commands
     if sys.platform == "win32":
@@ -2120,6 +2181,10 @@ def _offer_scheduling(config: dict) -> None:
             click.echo(f"    labwatch schedule docker-update --every 1d")
         if system_update_enabled:
             click.echo(f"    labwatch schedule system-update --every 1w")
+            if su_needs_sudo:
+                click.echo(
+                    "    (the cron entry will need 'sudo' — see the sudoers note above)"
+                )
         click.echo(f"    labwatch schedule list    # see what's installed")
         _print_done()
         return
@@ -2185,7 +2250,8 @@ def _offer_scheduling(config: dict) -> None:
             click.secho(f"  Installed: {line}", fg="green")
 
         if system_update_enabled:
-            line = scheduler.add_entry("system-update", system_update_interval)
+            line = scheduler.add_entry("system-update", system_update_interval,
+                                       use_sudo=su_needs_sudo)
             click.secho(f"  Installed: {line}", fg="green")
 
         click.echo()

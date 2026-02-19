@@ -567,7 +567,7 @@ labwatch system-update --dry-run
 # Run the upgrade (requires root)
 sudo labwatch system-update
 
-# Schedule daily upgrades via cron
+# Schedule weekly upgrades via cron
 labwatch schedule system-update --every 1w
 ```
 
@@ -578,6 +578,8 @@ labwatch schedule system-update --every 1w
 **Options:**
 - `autoremove` — automatically clean up unused packages after upgrade (default: on)
 - `auto_reboot` — schedule `shutdown -r +1` if a kernel update requires a reboot (default: off). The 1-minute delay lets the notification send first.
+
+**Root privileges:** System updates require root to run `apt-get`. If you're not running as root, the `labwatch init` wizard detects this and shows you exactly how to set up passwordless sudo — a single sudoers line that grants the minimum permission needed. The wizard also automatically adds `sudo` to the cron entry so scheduled updates run correctly.
 
 Notifications are sent via ntfy on completion, with package counts, error status, and reboot status.
 

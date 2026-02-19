@@ -17,6 +17,7 @@ from labwatch.wizard import (
     SCHEDULE_TIERS,
     _module_selection_fallback,
     _section_smart,
+    _warn_if_sudo_needed,
 )
 
 
@@ -335,3 +336,47 @@ class TestWizardPrintSummary:
 
         output = " ".join(str(c) for c in mock_echo.call_args_list)
         assert "smart" in output
+
+
+# ---------------------------------------------------------------------------
+# _warn_if_sudo_needed
+# ---------------------------------------------------------------------------
+
+class TestWarnIfSudoNeeded:
+    def test_returns_false_on_windows(self):
+        with patch("labwatch.wizard.sys.platform", "win32"):
+            assert _warn_if_sudo_needed() is False
+
+    def test_returns_false_when_root(self):
+        with patch("labwatch.wizard.sys.platform", "linux"), \
+             patch("labwatch.wizard.os.geteuid", create=True, return_value=0):
+            assert _warn_if_sudo_needed() is False
+
+    def test_returns_true_when_not_root(self):
+        with patch("labwatch.wizard.sys.platform", "linux"), \
+             patch("labwatch.wizard.os.geteuid", create=True, return_value=1000), \
+             patch("labwatch.wizard.click.echo"), \
+             patch("labwatch.wizard.click.secho"), \
+             patch("labwatch.scheduler.shutil.which", return_value="/usr/local/bin/labwatch"), \
+             patch("getpass.getuser", return_value="pi"):
+            assert _warn_if_sudo_needed() is True
+
+    def test_shows_sudoers_guidance_when_not_root(self):
+        with patch("labwatch.wizard.sys.platform", "linux"), \
+             patch("labwatch.wizard.os.geteuid", create=True, return_value=1000), \
+             patch("labwatch.wizard.click.echo") as mock_echo, \
+             patch("labwatch.wizard.click.secho") as mock_secho, \
+             patch("labwatch.scheduler.shutil.which", return_value="/usr/local/bin/labwatch"), \
+             patch("getpass.getuser", return_value="pi"):
+            _warn_if_sudo_needed()
+
+        # Should mention root privileges
+        secho_output = " ".join(str(c) for c in mock_secho.call_args_list)
+        assert "root privileges" in secho_output
+
+        # Should show the visudo command
+        assert "visudo" in secho_output
+
+        # Should show the sudoers line with the username and labwatch path
+        assert "pi ALL=(root) NOPASSWD:" in secho_output
+        assert "/usr/local/bin/labwatch system-update" in secho_output

@@ -158,12 +158,17 @@ def list_entries() -> List[str]:
     return [line for line in lw_lines if MARKER_PREFIX in line]
 
 
-def add_entry(subcommand: str, interval: str, modules: Optional[List[str]] = None) -> str:
+def add_entry(subcommand: str, interval: str, modules: Optional[List[str]] = None,
+              *, use_sudo: bool = False) -> str:
     """Add (or replace) a labwatch cron entry for the given subcommand.
 
     If *modules* is provided (e.g. ["network", "dns"]), the entry is scoped
     to those check modules via ``--only`` and gets its own cron marker so it
     can coexist with other per-module entries.
+
+    If *use_sudo* is True the command is prefixed with ``sudo`` so that a
+    non-root user's cron job can run privileged subcommands (requires a
+    matching NOPASSWD sudoers entry).
 
     All labwatch entries are kept inside a sentinel block in the crontab.
 
@@ -172,14 +177,15 @@ def add_entry(subcommand: str, interval: str, modules: Optional[List[str]] = Non
     _check_platform()
     cron_expr = parse_interval(interval)
     labwatch_path = resolve_labwatch_path()
+    sudo_prefix = "sudo " if use_sudo else ""
 
     if modules:
         modules_str = ",".join(sorted(modules))
         marker = f"{MARKER_PREFIX}{subcommand}:{modules_str}"
-        cron_line = f"{cron_expr} {labwatch_path} {subcommand} --only {modules_str} {marker}"
+        cron_line = f"{cron_expr} {sudo_prefix}{labwatch_path} {subcommand} --only {modules_str} {marker}"
     else:
         marker = f"{MARKER_PREFIX}{subcommand}"
-        cron_line = f"{cron_expr} {labwatch_path} {subcommand} {marker}"
+        cron_line = f"{cron_expr} {sudo_prefix}{labwatch_path} {subcommand} {marker}"
 
     crontab = _read_crontab()
     user_lines, lw_lines = _split_crontab(crontab)
