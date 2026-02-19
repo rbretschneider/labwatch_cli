@@ -64,6 +64,12 @@ pipx install labwatch
 pip install labwatch
 ```
 
+> **PATH note (DietPi / Raspberry Pi / Debian):** When you install as a non-root user, pip puts the `labwatch` binary in `~/.local/bin/`. Debian-based systems don't always add this to your PATH. If `labwatch` is "command not found" after install, add this line to `~/.bashrc` and open a new shell:
+> ```bash
+> export PATH="$HOME/.local/bin:$PATH"
+> ```
+> This is not needed with pipx (which runs `ensurepath` for you) or if you install as root with `sudo pip install labwatch`.
+
 ### Updating
 
 ```bash

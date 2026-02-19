@@ -975,6 +975,37 @@ def doctor_cmd(ctx):
     console.print("[bold]labwatch doctor[/bold]")
     console.print()
 
+    # --- PATH persistence ---
+    if sys.platform != "win32":
+        import shutil
+        lw_bin = shutil.which("labwatch")
+        if lw_bin:
+            bin_dir = str(Path(lw_bin).parent)
+            # Check if the directory is in a common shell profile so it
+            # survives new sessions and cron.  We look at ~/.bashrc and
+            # ~/.profile — the two files Debian sources for login shells.
+            home = Path.home()
+            profiles = [home / ".bashrc", home / ".profile", home / ".bash_profile"]
+            in_default_path = bin_dir in ("/usr/bin", "/usr/local/bin", "/bin", "/sbin",
+                                          "/usr/sbin", "/usr/local/sbin")
+            if not in_default_path:
+                found_in_profile = False
+                for pf in profiles:
+                    try:
+                        if pf.exists() and bin_dir in pf.read_text():
+                            found_in_profile = True
+                            break
+                    except OSError:
+                        pass
+                if not found_in_profile:
+                    _warn(f"labwatch is in {bin_dir} which may not be in PATH for new shells")
+                    console.print(f"    Add to ~/.bashrc:  [bold]export PATH=\"{bin_dir}:$PATH\"[/bold]")
+                else:
+                    _ok(f"labwatch binary: {lw_bin}")
+            else:
+                _ok(f"labwatch binary: {lw_bin}")
+        console.print()
+
     # --- Config file ---
     console.print("[bold]Config[/bold]")
     config_path_str = ctx.obj.get("config_path")
