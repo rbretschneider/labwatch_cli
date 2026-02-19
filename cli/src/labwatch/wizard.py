@@ -284,6 +284,17 @@ def _confirm_enable(label: str, current: bool) -> bool:
     return click.confirm(f"Enable {label}? (currently {state})", default=current)
 
 
+def _keep_current(label: str, summary_lines: list) -> bool:
+    """Show current settings summary and ask if user wants to keep them.
+
+    Returns True if user wants to keep (skip individual prompts).
+    """
+    click.echo(f"\n  Current {label}:")
+    for line in summary_lines:
+        click.echo(f"    {line}")
+    return click.confirm(f"  Keep current {label}?", default=True)
+
+
 # ---------------------------------------------------------------------------
 # Per-section functions.  Each mutates *config* in place and reads existing
 # values as defaults so that a re-run shows the previous answers.
@@ -338,6 +349,16 @@ def _section_notifications(config: dict) -> None:
     config["notifications"]["ntfy"]["enabled"] = ntfy_enabled
 
     if ntfy_enabled:
+        existing_server = existing_ntfy.get("server", "")
+        existing_topic = existing_ntfy.get("topic", "")
+        if existing_server and existing_topic and _keep_current("notification settings", [
+            f"server: {existing_server}",
+            f"topic: {existing_topic}",
+        ]):
+            config["notifications"]["ntfy"]["server"] = existing_server
+            config["notifications"]["ntfy"]["topic"] = existing_topic
+            return
+
         click.secho(
             "  The server URL is where alerts are sent. Use https://ntfy.sh for\n"
             "  the free public server, or your own URL if you self-host ntfy.",
@@ -378,12 +399,20 @@ def _section_system(config: dict, *, from_menu: bool = False) -> None:
     config["checks"]["system"]["enabled"] = sys_enabled
 
     if sys_enabled:
+        existing_t = existing.get("thresholds", {})
+        if existing_t and _keep_current("thresholds", [
+            f"disk: warn {existing_t.get('disk_warning', 80)}% / crit {existing_t.get('disk_critical', 90)}%",
+            f"memory: warn {existing_t.get('memory_warning', 80)}% / crit {existing_t.get('memory_critical', 90)}%",
+            f"cpu: warn {existing_t.get('cpu_warning', 80)}% / crit {existing_t.get('cpu_critical', 95)}%",
+        ]):
+            config["checks"]["system"]["thresholds"] = dict(existing_t)
+            return
+
         click.secho(
             "  Set thresholds for when to alert. 'Warning' sends a heads-up,\n"
             "  'critical' means something needs immediate attention.",
             dim=True,
         )
-        existing_t = existing.get("thresholds", {})
         config["checks"]["system"]["thresholds"] = {
             "disk_warning": click.prompt(
                 "Disk warning threshold (%)",
@@ -439,10 +468,58 @@ def _section_docker(config: dict, *, from_menu: bool = False) -> None:
             )
 
     config.setdefault("checks", {})
+
+    if not docker_enabled:
+        config["checks"]["docker"] = {
+            "enabled": False,
+            "watch_stopped": existing.get("watch_stopped", True),
+            "containers": existing.get("containers", []),
+        }
+        return
+
+    existing_ws = existing.get("watch_stopped", True)
+    existing_containers = existing.get("containers", [])
+
+    # Offer keep-current shortcut when settings have been configured before
+    if "watch_stopped" in existing and _keep_current("Docker settings", [
+        f"alert on stopped containers: {'yes' if existing_ws else 'no'}",
+        f"monitoring: {', '.join(existing_containers) if existing_containers else 'all containers'}",
+    ]):
+        config["checks"]["docker"] = {
+            "enabled": True,
+            "watch_stopped": existing_ws,
+            "containers": existing_containers,
+        }
+        return
+
+    click.secho(
+        "  Alert on stopped/exited containers? If yes, labwatch flags any\n"
+        "  container that isn't 'running' as a warning or critical alert.\n"
+        "  Disable if you intentionally keep some containers stopped.",
+        dim=True,
+    )
+    watch_stopped = click.confirm(
+        "  Alert on stopped containers?",
+        default=existing_ws,
+    )
+
+    click.secho(
+        "  Monitor specific containers only, or all of them?\n"
+        "  Leave empty to monitor everything. Or enter container names\n"
+        "  separated by commas to watch only those.",
+        dim=True,
+    )
+    containers_str = click.prompt(
+        "  Container names (comma-separated, empty = all)",
+        default=", ".join(existing_containers) if existing_containers else "",
+        show_default=False,
+    )
+    containers = [c.strip() for c in containers_str.split(",") if c.strip()] if containers_str.strip() else []
+
     config["checks"]["docker"] = {
-        "enabled": docker_enabled,
-        "watch_stopped": existing.get("watch_stopped", True),
-        "containers": existing.get("containers", []),
+        "enabled": True,
+        "watch_stopped": watch_stopped,
+        "containers": containers,
     }
 
 
@@ -536,15 +613,29 @@ def _section_nginx(config: dict, *, from_menu: bool = False) -> None:
     config["checks"]["nginx"]["endpoints"] = kept
 
     if nginx_enabled:
+        existing_container = existing.get("container", "")
+        existing_config_test = existing.get("config_test", True)
+
+        # Offer keep-current shortcut when nginx has been configured before
+        if "container" in existing and _keep_current("Nginx settings", [
+            f"mode: {'Docker container: ' + existing_container if existing_container else 'host (systemd/direct)'}",
+            f"config test (nginx -t): {'yes' if existing_config_test else 'no'}",
+            f"endpoints: {len(kept)}",
+        ]):
+            config["checks"]["nginx"]["container"] = existing_container
+            config["checks"]["nginx"]["config_test"] = existing_config_test
+            return
+
         click.secho(
             "  If Nginx runs in Docker, enter the container name so labwatch\n"
             "  can check it via the Docker API. Leave empty if Nginx is\n"
             "  installed directly on the host (systemd/apt/yum).",
             dim=True,
         )
+        container_default = existing_container or ""
         container = click.prompt(
-            "  Nginx Docker container name (empty if installed on host)",
-            default=existing.get("container", ""), show_default=False,
+            f"  Nginx Docker container name (empty if on host){f' [{container_default}]' if container_default else ''}",
+            default=container_default, show_default=bool(container_default),
         )
         config["checks"]["nginx"]["container"] = container.strip()
 
@@ -557,7 +648,7 @@ def _section_nginx(config: dict, *, from_menu: bool = False) -> None:
         )
         config_test = click.confirm(
             "  Enable nginx config test (nginx -t)?",
-            default=existing.get("config_test", bool(container)),
+            default=existing_config_test,
         )
         config["checks"]["nginx"]["config_test"] = config_test
 
@@ -591,30 +682,44 @@ def _section_smart(config: dict, *, from_menu: bool = False) -> None:
     config["checks"]["smart"].setdefault("devices", existing.get("devices", []))
 
     if smart_enabled:
-        click.secho(
-            "  Set temperature thresholds for drive alerts (in Celsius).",
-            dim=True,
-        )
-        config["checks"]["smart"]["temp_warning"] = click.prompt(
-            "  Temperature warning threshold (C)",
-            default=existing.get("temp_warning", 50), type=int,
-        )
-        config["checks"]["smart"]["temp_critical"] = click.prompt(
-            "  Temperature critical threshold (C)",
-            default=existing.get("temp_critical", 60), type=int,
-        )
-        click.secho(
-            "  Set wear thresholds for SSD/NVMe life percentage used.",
-            dim=True,
-        )
-        config["checks"]["smart"]["wear_warning"] = click.prompt(
-            "  Wear warning threshold (%)",
-            default=existing.get("wear_warning", 80), type=int,
-        )
-        config["checks"]["smart"]["wear_critical"] = click.prompt(
-            "  Wear critical threshold (%)",
-            default=existing.get("wear_critical", 90), type=int,
-        )
+        # Offer keep-current shortcut for thresholds
+        tw = existing.get("temp_warning")
+        tc = existing.get("temp_critical")
+        ww = existing.get("wear_warning")
+        wc = existing.get("wear_critical")
+        if tw is not None and _keep_current("thresholds", [
+            f"temperature: warn {tw}C / crit {tc}C",
+            f"wear: warn {ww}% / crit {wc}%",
+        ]):
+            config["checks"]["smart"]["temp_warning"] = tw
+            config["checks"]["smart"]["temp_critical"] = tc
+            config["checks"]["smart"]["wear_warning"] = ww
+            config["checks"]["smart"]["wear_critical"] = wc
+        else:
+            click.secho(
+                "  Set temperature thresholds for drive alerts (in Celsius).",
+                dim=True,
+            )
+            config["checks"]["smart"]["temp_warning"] = click.prompt(
+                "  Temperature warning threshold (C)",
+                default=existing.get("temp_warning", 50), type=int,
+            )
+            config["checks"]["smart"]["temp_critical"] = click.prompt(
+                "  Temperature critical threshold (C)",
+                default=existing.get("temp_critical", 60), type=int,
+            )
+            click.secho(
+                "  Set wear thresholds for SSD/NVMe life percentage used.",
+                dim=True,
+            )
+            config["checks"]["smart"]["wear_warning"] = click.prompt(
+                "  Wear warning threshold (%)",
+                default=existing.get("wear_warning", 80), type=int,
+            )
+            config["checks"]["smart"]["wear_critical"] = click.prompt(
+                "  Wear critical threshold (%)",
+                default=existing.get("wear_critical", 90), type=int,
+            )
 
         existing_devices = existing.get("devices", [])
         kept = _review_existing_list(existing_devices, "devices", lambda d: d)
@@ -712,18 +817,26 @@ def _section_certs(config: dict, *, from_menu: bool = False) -> None:
                 break
             config["checks"]["certs"]["domains"].append(domain.strip())
 
-        click.secho(
-            "  Set how many days before expiry to trigger each severity level.",
-            dim=True,
-        )
-        config["checks"]["certs"]["warn_days"] = click.prompt(
-            "  Warning threshold (days before expiry)",
-            default=existing.get("warn_days", 14), type=int,
-        )
-        config["checks"]["certs"]["critical_days"] = click.prompt(
-            "  Critical threshold (days before expiry)",
-            default=existing.get("critical_days", 7), type=int,
-        )
+        wd = existing.get("warn_days")
+        cd = existing.get("critical_days")
+        if wd is not None and _keep_current("thresholds", [
+            f"warn at {wd} days / crit at {cd} days before expiry",
+        ]):
+            config["checks"]["certs"]["warn_days"] = wd
+            config["checks"]["certs"]["critical_days"] = cd
+        else:
+            click.secho(
+                "  Set how many days before expiry to trigger each severity level.",
+                dim=True,
+            )
+            config["checks"]["certs"]["warn_days"] = click.prompt(
+                "  Warning threshold (days before expiry)",
+                default=existing.get("warn_days", 14), type=int,
+            )
+            config["checks"]["certs"]["critical_days"] = click.prompt(
+                "  Critical threshold (days before expiry)",
+                default=existing.get("critical_days", 7), type=int,
+            )
 
 
 def _section_ping(config: dict, *, from_menu: bool = False) -> None:
@@ -765,6 +878,11 @@ def _section_ping(config: dict, *, from_menu: bool = False) -> None:
                 break
             config["checks"]["ping"]["hosts"].append(host.strip())
 
+        config["checks"]["ping"]["timeout"] = click.prompt(
+            "  Ping timeout in seconds",
+            default=existing.get("timeout", 5), type=int,
+        )
+
 
 def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
@@ -790,6 +908,24 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
     config["checks"]["home_assistant"].setdefault("google_home", existing.get("google_home", True))
 
     if ha_enabled:
+        existing_url = existing.get("url", "http://localhost:8123")
+        existing_ext = existing.get("external_url", "")
+        existing_token = existing.get("token", "")
+        existing_gh = existing.get("google_home", True)
+
+        # Offer keep-current shortcut when HA has been configured before
+        if existing.get("url") and _keep_current("Home Assistant settings", [
+            f"local URL: {existing_url}",
+            f"external URL: {existing_ext or '(none)'}",
+            f"access token: {'configured' if existing_token else '(none)'}",
+            f"Google Home check: {'yes' if existing_gh else 'no'}",
+        ]):
+            config["checks"]["home_assistant"]["url"] = existing_url
+            config["checks"]["home_assistant"]["external_url"] = existing_ext
+            config["checks"]["home_assistant"]["token"] = existing_token
+            config["checks"]["home_assistant"]["google_home"] = existing_gh
+            return
+
         click.secho(
             "  The local URL is how labwatch reaches HA on your network.\n"
             "  Usually http://localhost:8123 if HA runs on this machine.",
@@ -797,7 +933,7 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
         )
         config["checks"]["home_assistant"]["url"] = click.prompt(
             "  Local HA URL",
-            default=existing.get("url", "http://localhost:8123"),
+            default=existing_url,
         )
         click.secho(
             "  If you access HA remotely (e.g. via Nabu Casa or your own\n"
@@ -806,7 +942,7 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
         )
         ext_url = click.prompt(
             "  External HA URL (empty to skip)",
-            default=existing.get("external_url", ""), show_default=False,
+            default=existing_ext, show_default=bool(existing_ext),
         )
         config["checks"]["home_assistant"]["external_url"] = ext_url.strip()
         click.secho(
@@ -815,9 +951,11 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
             "  Profile -> Security -> Long-Lived Access Tokens.",
             dim=True,
         )
+        if existing_token:
+            click.secho("  (token is currently configured)", dim=True)
         token = click.prompt(
-            "  Long-lived access token (empty to skip deep checks)",
-            default=existing.get("token", ""), show_default=False,
+            "  Long-lived access token (empty to skip)",
+            default=existing_token, show_default=False,
         )
         config["checks"]["home_assistant"]["token"] = token.strip()
         click.secho(
@@ -827,7 +965,7 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
         )
         config["checks"]["home_assistant"]["google_home"] = click.confirm(
             "  Check Google Home API connectivity?",
-            default=existing.get("google_home", True),
+            default=existing_gh,
         )
 
 
@@ -1062,20 +1200,28 @@ def _section_updates(config: dict, *, from_menu: bool = False) -> None:
     config["checks"]["updates"].setdefault("critical_threshold", existing.get("critical_threshold", 50))
 
     if updates_enabled:
-        click.secho(
-            "  Set how many pending updates trigger each severity level.\n"
-            "  For example: warn at 1+ pending, critical at 50+ pending.\n"
-            "  This uses your system package manager (apt, dnf, or yum).",
-            dim=True,
-        )
-        config["checks"]["updates"]["warning_threshold"] = click.prompt(
-            "  Warning threshold (number of pending updates)",
-            default=existing.get("warning_threshold", 1), type=int,
-        )
-        config["checks"]["updates"]["critical_threshold"] = click.prompt(
-            "  Critical threshold (number of pending updates)",
-            default=existing.get("critical_threshold", 50), type=int,
-        )
+        wt = existing.get("warning_threshold")
+        ct = existing.get("critical_threshold")
+        if wt is not None and _keep_current("thresholds", [
+            f"warn at {wt}+ pending / crit at {ct}+ pending",
+        ]):
+            config["checks"]["updates"]["warning_threshold"] = wt
+            config["checks"]["updates"]["critical_threshold"] = ct
+        else:
+            click.secho(
+                "  Set how many pending updates trigger each severity level.\n"
+                "  For example: warn at 1+ pending, critical at 50+ pending.\n"
+                "  This uses your system package manager (apt, dnf, or yum).",
+                dim=True,
+            )
+            config["checks"]["updates"]["warning_threshold"] = click.prompt(
+                "  Warning threshold (number of pending updates)",
+                default=existing.get("warning_threshold", 1), type=int,
+            )
+            config["checks"]["updates"]["critical_threshold"] = click.prompt(
+                "  Critical threshold (number of pending updates)",
+                default=existing.get("critical_threshold", 50), type=int,
+            )
 
 
 def _section_command(config: dict, *, from_menu: bool = False) -> None:
@@ -1111,7 +1257,7 @@ def _section_command(config: dict, *, from_menu: bool = False) -> None:
             "  specific string in the output to consider the check passing.",
             dim=True,
         )
-        while click.confirm("  Add a command check?", default=True):
+        while click.confirm("  Add a command check?", default=not bool(kept)):
             cmd_name = click.prompt("    Check name (a label for this check)")
             cmd_command = click.prompt("    Shell command to run (e.g. 'curl -sf http://...')")
             cmd_expect = click.prompt(
