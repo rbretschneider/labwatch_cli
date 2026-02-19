@@ -885,6 +885,47 @@ def _toggle_module(ctx, module: str, enabled: bool) -> None:
     console.print(f"[green]\u2714[/green] {module} {state}")
 
 
+@cli.command("modules")
+@click.pass_context
+def modules_cmd(ctx):
+    """List all available modules with descriptions and status."""
+    from labwatch.wizard import MODULES
+
+    console = _get_console(ctx)
+    cfg = {}
+    try:
+        cfg = _get_config(ctx)
+    except Exception:
+        pass  # no config yet — show all as disabled
+
+    console.print("[bold]Available modules[/bold]")
+    console.print()
+
+    for mod in MODULES:
+        key = mod["key"]
+        label = mod["label"]
+        desc = mod["short_desc"]
+        config_path = mod["config_path"]
+
+        # Resolve enabled state from config
+        if config_path.startswith("checks."):
+            check_name = config_path.split(".", 1)[1]
+            enabled = cfg.get("checks", {}).get(check_name, {}).get("enabled", False)
+        elif config_path == "update.compose_dirs":
+            enabled = bool(cfg.get("update", {}).get("compose_dirs", []))
+        elif config_path == "update.system":
+            enabled = cfg.get("update", {}).get("system", {}).get("enabled", False)
+        else:
+            enabled = False
+
+        status = "[green]on[/green]" if enabled else "[dim]off[/dim]"
+        console.print(f"  {status:>16s}  [bold]{key:18s}[/bold] {label} -- {desc}")
+
+    console.print()
+    console.print("[dim]Use 'labwatch enable <module>' / 'labwatch disable <module>' to toggle.[/dim]")
+    console.print("[dim]Use 'labwatch init --only <module>' to reconfigure a module.[/dim]")
+
+
 @cli.command("update")
 @click.pass_context
 def update_cmd(ctx):

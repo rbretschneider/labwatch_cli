@@ -152,6 +152,7 @@ Use `--config /tmp/test.yaml` to try it without overwriting your real config.
 | `labwatch summarize` | Show config summary as a Rich tree |
 | `labwatch validate` | Validate config file |
 | `labwatch edit` | Open config in your default editor |
+| `labwatch modules` | List all modules with descriptions and on/off status |
 | `labwatch enable docker` | Enable a check module |
 | `labwatch disable docker` | Disable a check module |
 | `labwatch doctor` | Check installation health and connectivity |
