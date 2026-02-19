@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 import click
@@ -805,8 +806,27 @@ def update_cmd(ctx):
     console.print(f"[bold]Current version:[/bold] {current}")
     console.print("Checking PyPI for updates...")
 
+    # Query PyPI directly to get the latest version — avoids pip's unreliable
+    # --upgrade resolution when the package was installed from a VCS URL.
+    try:
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/labwatch/json",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            latest = json.loads(resp.read())["info"]["version"]
+    except Exception as e:
+        console.print(f"[red]Failed to check PyPI:[/red] {e}")
+        raise SystemExit(1)
+
+    if latest == current:
+        console.print(f"[green]\u2714[/green] Already up to date ({current})")
+        return
+
+    console.print(f"Updating to {latest}...")
+
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir", "labwatch"],
+        [sys.executable, "-m", "pip", "install", f"labwatch=={latest}"],
         capture_output=True, text=True,
     )
 
@@ -816,17 +836,7 @@ def update_cmd(ctx):
             console.print(result.stderr.strip())
         raise SystemExit(1)
 
-    # Re-check the installed version
-    ver_result = subprocess.run(
-        [sys.executable, "-c", "import labwatch; print(labwatch.__version__)"],
-        capture_output=True, text=True,
-    )
-    new_version = ver_result.stdout.strip() if ver_result.returncode == 0 else "unknown"
-
-    if new_version == current:
-        console.print(f"[green]\u2714[/green] Already up to date ({current})")
-    else:
-        console.print(f"[green]\u2714[/green] Updated: {current} \u2192 {new_version}")
+    console.print(f"[green]\u2714[/green] Updated: {current} \u2192 {latest}")
 
 
 @cli.command("doctor")
