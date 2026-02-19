@@ -825,12 +825,19 @@ def update_cmd(ctx):
 
     console.print(f"Updating to {latest}...")
 
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--no-cache-dir", f"labwatch=={latest}"],
-        capture_output=True, text=True,
-    )
-
-    if result.returncode != 0:
+    # PyPI's JSON API may propagate a new version before the package index
+    # (Simple API) that pip uses for downloads.  Retry a few times if pip
+    # can't find the version yet.
+    pip_cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", f"labwatch=={latest}"]
+    for attempt in range(3):
+        result = subprocess.run(pip_cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            break
+        if "No matching distribution" in (result.stderr or "") and attempt < 2:
+            wait = 5 * (attempt + 1)
+            console.print(f"  Package index not updated yet, retrying in {wait}s...")
+            time.sleep(wait)
+            continue
         console.print(f"[red]Update failed:[/red]")
         if result.stderr:
             console.print(result.stderr.strip())
