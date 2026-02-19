@@ -69,7 +69,7 @@ The `labwatch init` wizard handles everything: config generation, notification t
 | `labwatch schedule check --every 5m` | Schedule checks to cron |
 | `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
 | `labwatch schedule docker-update --every 1d` | Schedule Docker Compose updates |
-| `labwatch schedule system-update --every 1d` | Schedule system package updates |
+| `labwatch schedule system-update --every 1w` | Schedule system package updates |
 | `labwatch schedule list` | Show all labwatch cron entries |
 | `labwatch schedule remove` | Remove labwatch cron entries |
 | `labwatch enable docker` | Enable a check module |
@@ -111,7 +111,7 @@ labwatch schedule check --only network --every 1m
 labwatch schedule check --only http,dns,nginx --every 5m
 labwatch schedule check --only system,docker --every 30m
 labwatch schedule docker-update --every 1w
-labwatch schedule system-update --every 1d
+labwatch schedule system-update --every 1w
 labwatch schedule list
 ```
 

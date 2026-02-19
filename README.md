@@ -152,7 +152,7 @@ Use `--config /tmp/test.yaml` to try it without overwriting your real config.
 | `labwatch schedule check --every 5m` | Schedule all checks to cron |
 | `labwatch schedule check --only network --every 1m` | Schedule specific modules at their own interval |
 | `labwatch schedule docker-update --every 1d` | Add Docker update schedule to cron |
-| `labwatch schedule system-update --every 1d` | Add system update schedule to cron |
+| `labwatch schedule system-update --every 1w` | Add system update schedule to cron |
 | `labwatch schedule list` | Show all labwatch cron entries |
 | `labwatch schedule remove` | Remove all labwatch cron entries |
 | `labwatch schedule remove --only check` | Remove only check entries |
@@ -414,7 +414,7 @@ labwatch schedule check --only updates --every 1d
 labwatch schedule docker-update --every 1w
 
 # System package upgrades daily
-labwatch schedule system-update --every 1d
+labwatch schedule system-update --every 1w
 
 # See what's scheduled
 labwatch schedule list
@@ -568,7 +568,7 @@ labwatch system-update --dry-run
 sudo labwatch system-update
 
 # Schedule daily upgrades via cron
-labwatch schedule system-update --every 1d
+labwatch schedule system-update --every 1w
 ```
 
 **Modes:**

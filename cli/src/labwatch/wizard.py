@@ -1894,6 +1894,11 @@ _UPDATE_CHOICES: List[Tuple[str, str]] = [
     ("1w", "Weekly"),
 ]
 
+_SYSTEM_UPDATE_CHOICES: List[Tuple[str, str]] = [
+    ("1w", "Weekly (recommended)"),
+    ("1d", "Daily"),
+]
+
 
 def _offer_scheduling(config: dict) -> None:
     """Explain the execution model and offer to install cron entries."""
@@ -1946,7 +1951,7 @@ def _offer_scheduling(config: dict) -> None:
     if compose_dirs:
         click.echo(f"    {'daily':14s}  labwatch docker-update")
     if system_update_enabled:
-        click.echo(f"    {'daily':14s}  labwatch system-update")
+        click.echo(f"    {'weekly':14s}  labwatch system-update")
 
     # On Windows, we can't install cron — just print the commands
     if sys.platform == "win32":
@@ -1977,7 +1982,7 @@ def _offer_scheduling(config: dict) -> None:
         if compose_dirs:
             click.echo(f"    labwatch schedule docker-update --every 1d")
         if system_update_enabled:
-            click.echo(f"    labwatch schedule system-update --every 1d")
+            click.echo(f"    labwatch schedule system-update --every 1w")
         click.echo(f"    labwatch schedule list    # see what's installed")
         _print_done()
         return
@@ -1986,7 +1991,7 @@ def _offer_scheduling(config: dict) -> None:
     # schedule_plan: list of (interval, modules_list)
     schedule_plan: List[Tuple[str, List[str]]] = []
     update_interval = "1d"
-    system_update_interval = "1d"
+    system_update_interval = "1w"
 
     if choice == "C":
         click.echo()
@@ -2016,14 +2021,14 @@ def _offer_scheduling(config: dict) -> None:
 
         if system_update_enabled:
             click.echo(f"  System updates:")
-            for i, (intv, desc) in enumerate(_UPDATE_CHOICES, 1):
+            for i, (intv, desc) in enumerate(_SYSTEM_UPDATE_CHOICES, 1):
                 click.echo(f"    [{i}] {desc}")
             idx = click.prompt(
                 "    Choice",
-                type=click.IntRange(1, len(_UPDATE_CHOICES)),
+                type=click.IntRange(1, len(_SYSTEM_UPDATE_CHOICES)),
                 default=1,
             )
-            system_update_interval = _UPDATE_CHOICES[idx - 1][0]
+            system_update_interval = _SYSTEM_UPDATE_CHOICES[idx - 1][0]
     else:
         # Accept recommended
         for default_interval, _label, modules, _choices in active_tiers:
