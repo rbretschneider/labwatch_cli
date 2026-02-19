@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -806,13 +807,12 @@ def update_cmd(ctx):
     console.print(f"[bold]Current version:[/bold] {current}")
     console.print("Checking PyPI for updates...")
 
-    # Query PyPI directly to get the latest version — avoids pip's unreliable
-    # --upgrade resolution when the package was installed from a VCS URL.
+    # Query PyPI directly for the latest version.  A timestamp query parameter
+    # cache-busts PyPI's Fastly CDN so we always hit the origin server instead
+    # of getting a stale cached response after a recent publish.
     try:
-        req = urllib.request.Request(
-            "https://pypi.org/pypi/labwatch/json",
-            headers={"Accept": "application/json"},
-        )
+        url = f"https://pypi.org/pypi/labwatch/json?_t={int(time.time())}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             latest = json.loads(resp.read())["info"]["version"]
     except Exception as e:
