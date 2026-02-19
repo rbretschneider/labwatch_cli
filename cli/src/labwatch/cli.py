@@ -806,7 +806,7 @@ def update_cmd(ctx):
     console.print("Checking PyPI for updates...")
 
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", "labwatch"],
+        [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir", "labwatch"],
         capture_output=True, text=True,
     )
 
