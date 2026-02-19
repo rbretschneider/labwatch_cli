@@ -273,26 +273,44 @@ def _review_existing_list(
     click.echo(f"\n  Current {label}:")
     for i, item in enumerate(items, 1):
         click.echo(f"    {i}. {format_item(item)}")
-    if click.confirm(f"  Keep these {label}?", default=True):
-        return list(items)
-    return []
+    r = click.prompt(
+        "  Enter to keep, 'n' to clear and reconfigure",
+        default="", show_default=False,
+    )
+    if r.strip().lower() == "n":
+        return []
+    return list(items)
 
 
 def _confirm_enable(label: str, current: bool) -> bool:
-    """Prompt the user to enable/disable a module, showing current state."""
+    """Prompt the user to enable/disable a module, showing current state.
+
+    Enter = keep current state.  Type 'y' or 'n' to change.
+    """
     state = "enabled" if current else "disabled"
-    return click.confirm(f"Enable {label}? (currently {state})", default=current)
+    r = click.prompt(
+        f"  {label}: {state}  (Enter to keep, y/n to change)",
+        default="", show_default=False,
+    )
+    r = r.strip().lower()
+    if not r:
+        return current
+    return r in ("y", "yes")
 
 
 def _keep_current(label: str, summary_lines: list) -> bool:
     """Show current settings summary and ask if user wants to keep them.
 
-    Returns True if user wants to keep (skip individual prompts).
+    Enter = keep all.  Type 'n' to reconfigure.
     """
     click.echo(f"\n  Current {label}:")
     for line in summary_lines:
         click.echo(f"    {line}")
-    return click.confirm(f"  Keep current {label}?", default=True)
+    r = click.prompt(
+        "  Enter to keep, 'n' to change",
+        default="", show_default=False,
+    )
+    return r.strip().lower() != "n"
 
 
 # ---------------------------------------------------------------------------
@@ -460,11 +478,9 @@ def _section_docker(config: dict, *, from_menu: bool = False) -> None:
             )
         else:
             click.echo("Docker not available on this system.")
-            cur = existing.get("enabled", False)
-            state = "enabled" if cur else "disabled"
-            docker_enabled = click.confirm(
-                f"Enable Docker monitoring anyway (for remote use)? (currently {state})",
-                default=cur,
+            docker_enabled = _confirm_enable(
+                "Docker monitoring (remote use)",
+                existing.get("enabled", False),
             )
 
     config.setdefault("checks", {})
@@ -983,11 +999,9 @@ def _section_systemd(config: dict, *, from_menu: bool = False) -> None:
         systemd_enabled = True
     elif discovered is None:
         click.echo("  systemctl not available on this system.")
-        cur = existing.get("enabled", False)
-        state = "enabled" if cur else "disabled"
-        systemd_enabled = click.confirm(
-            f"Enable systemd monitoring anyway (for remote use)? (currently {state})",
-            default=cur,
+        systemd_enabled = _confirm_enable(
+            "systemd monitoring (remote use)",
+            existing.get("enabled", False),
         )
     else:
         known = [u for u in discovered if u["label"]]
@@ -1496,8 +1510,8 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
     if is_rerun:
         config = load_config(path)
         click.secho(
-            "  Existing config loaded. Current values shown as defaults\n"
-            "  in [brackets] — press Enter to keep them.",
+            "  Existing config loaded — press Enter at any prompt to keep\n"
+            "  the current value. Only type if you want to change something.",
             dim=True,
         )
     else:

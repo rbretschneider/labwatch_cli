@@ -826,7 +826,7 @@ def update_cmd(ctx):
     console.print(f"Updating to {latest}...")
 
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", f"labwatch=={latest}"],
+        [sys.executable, "-m", "pip", "install", "--no-cache-dir", f"labwatch=={latest}"],
         capture_output=True, text=True,
     )
 

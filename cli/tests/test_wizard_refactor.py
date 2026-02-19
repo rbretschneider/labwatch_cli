@@ -116,12 +116,12 @@ class TestSectionSmart:
     def test_from_menu_sets_enabled(self):
         """When from_menu=True, smart should be enabled without prompting."""
         config = copy.deepcopy(DEFAULT_CONFIG)
-        # Mock click.prompt to avoid interactive prompts
+        # _keep_current now uses click.prompt; "n" declines keep, then thresholds + device
         with patch("labwatch.wizard.click.prompt") as mock_prompt, \
              patch("labwatch.wizard.click.confirm", return_value=False), \
              patch("labwatch.wizard.click.echo"), \
              patch("labwatch.wizard.click.secho"):
-            mock_prompt.side_effect = [50, 60, 80, 90, ""]
+            mock_prompt.side_effect = ["n", 50, 60, 80, 90, ""]
             _section_smart(config, from_menu=True)
 
         assert config["checks"]["smart"]["enabled"] is True
@@ -129,25 +129,28 @@ class TestSectionSmart:
     def test_without_from_menu_asks_enable(self):
         """When from_menu=False, it should prompt to enable."""
         config = copy.deepcopy(DEFAULT_CONFIG)
+        # _confirm_enable now uses click.prompt; "n" disables the module
         with patch("labwatch.wizard.click.prompt") as mock_prompt, \
-             patch("labwatch.wizard.click.confirm", return_value=False) as mock_confirm, \
+             patch("labwatch.wizard.click.confirm", return_value=False), \
              patch("labwatch.wizard.click.echo"), \
              patch("labwatch.wizard.click.secho"):
+            mock_prompt.return_value = "n"
             _section_smart(config, from_menu=False)
 
-        # confirm should have been called (for "Enable S.M.A.R.T.?")
-        mock_confirm.assert_called()
+        # prompt should have been called (for enable check)
+        mock_prompt.assert_called()
         assert config["checks"]["smart"]["enabled"] is False
 
     def test_smart_configures_thresholds(self):
         """When enabled, thresholds are configured."""
         config = copy.deepcopy(DEFAULT_CONFIG)
+        # "n" declines _keep_current, then threshold values, then device empty
         with patch("labwatch.wizard.click.prompt") as mock_prompt, \
              patch("labwatch.wizard.click.confirm", return_value=False), \
              patch("labwatch.wizard.click.echo"), \
              patch("labwatch.wizard.click.secho"), \
              patch("labwatch.wizard._review_existing_list", return_value=[]):
-            mock_prompt.side_effect = [45, 55, 75, 85, ""]
+            mock_prompt.side_effect = ["n", 45, 55, 75, 85, ""]
             _section_smart(config, from_menu=True)
 
         assert config["checks"]["smart"]["temp_warning"] == 45
