@@ -2,6 +2,7 @@
 
 import os
 import platform
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -269,6 +270,37 @@ def _print_description(check_name: str) -> None:
     desc = CHECK_DESCRIPTIONS.get(check_name)
     if desc:
         click.secho(f"  {desc}", dim=True)
+
+
+# Map check modules to the system tools they require.
+# Used by _warn_missing_tool() to alert during wizard setup.
+_REQUIRED_TOOLS: Dict[str, Tuple[str, str]] = {
+    "smart": ("smartctl", "sudo apt install smartmontools"),
+    "ping": ("ping", "sudo apt install iputils-ping"),
+    "network": ("ip", "sudo apt install iproute2"),
+    "process": ("pgrep", "sudo apt install procps"),
+}
+
+
+def _warn_missing_tool(check_name: str) -> None:
+    """Warn if the system tool required by a check module is not installed."""
+    if sys.platform == "win32":
+        return
+    entry = _REQUIRED_TOOLS.get(check_name)
+    if not entry:
+        return
+    tool, install_hint = entry
+    if shutil.which(tool):
+        return
+    click.echo()
+    click.secho(
+        f"  Warning: '{tool}' is not installed on this system.",
+        fg="yellow", bold=True,
+    )
+    click.echo(f"  This check needs it to work. Install it with:")
+    click.echo()
+    click.secho(f"    {install_hint}", bold=True)
+    click.echo()
 
 
 # ---------------------------------------------------------------------------
@@ -728,6 +760,7 @@ def _section_smart(config: dict, *, from_menu: bool = False) -> None:
     config["checks"]["smart"].setdefault("devices", existing.get("devices", []))
 
     if smart_enabled:
+        _warn_missing_tool("smart")
         # Offer keep-current shortcut for thresholds
         tw = existing.get("temp_warning")
         tc = existing.get("temp_critical")
@@ -909,6 +942,7 @@ def _section_ping(config: dict, *, from_menu: bool = False) -> None:
     config["checks"]["ping"]["hosts"] = kept
 
     if ping_enabled:
+        _warn_missing_tool("ping")
         click.secho(
             "  Enter IP addresses or hostnames to ping. Good for monitoring\n"
             "  your router (192.168.1.1), a gateway, or a remote server.\n"
@@ -1290,6 +1324,7 @@ def _section_process(config: dict, *, from_menu: bool = False) -> None:
     config["checks"]["process"]["names"] = kept
 
     if process_enabled:
+        _warn_missing_tool("process")
         click.secho(
             "  Enter process names as they appear in 'ps' or 'pgrep'.\n"
             "  labwatch will alert if a process with that name isn't running\n"
@@ -1333,6 +1368,7 @@ def _section_network(config: dict, *, from_menu: bool = False) -> None:
     config["checks"]["network"]["interfaces"] = kept
 
     if network_enabled:
+        _warn_missing_tool("network")
         click.secho(
             "  Enter network interface names as shown by 'ip link' or 'ifconfig'.\n"
             "  Useful for VPN tunnels (tun0, wg0), bridges, or secondary NICs.\n"

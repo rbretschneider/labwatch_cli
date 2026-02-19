@@ -18,6 +18,7 @@ from labwatch.wizard import (
     _module_selection_fallback,
     _section_smart,
     _warn_if_sudo_needed,
+    _warn_missing_tool,
 )
 
 
@@ -380,3 +381,47 @@ class TestWarnIfSudoNeeded:
         # Should show the sudoers line with the username and labwatch path
         assert "pi ALL=(root) NOPASSWD:" in secho_output
         assert "/usr/local/bin/labwatch system-update" in secho_output
+
+
+# ---------------------------------------------------------------------------
+# _warn_missing_tool
+# ---------------------------------------------------------------------------
+
+class TestWarnMissingTool:
+    def test_skips_on_windows(self):
+        with patch("labwatch.wizard.sys.platform", "win32"), \
+             patch("labwatch.wizard.click.echo") as mock_echo:
+            _warn_missing_tool("smart")
+        mock_echo.assert_not_called()
+
+    def test_no_warning_when_tool_found(self):
+        with patch("labwatch.wizard.sys.platform", "linux"), \
+             patch("labwatch.wizard.shutil.which", return_value="/usr/sbin/smartctl"), \
+             patch("labwatch.wizard.click.secho") as mock_secho:
+            _warn_missing_tool("smart")
+        mock_secho.assert_not_called()
+
+    def test_warns_when_tool_missing(self):
+        with patch("labwatch.wizard.sys.platform", "linux"), \
+             patch("labwatch.wizard.shutil.which", return_value=None), \
+             patch("labwatch.wizard.click.echo"), \
+             patch("labwatch.wizard.click.secho") as mock_secho:
+            _warn_missing_tool("smart")
+        output = " ".join(str(c) for c in mock_secho.call_args_list)
+        assert "smartctl" in output
+        assert "smartmontools" in output
+
+    def test_shows_install_command(self):
+        with patch("labwatch.wizard.sys.platform", "linux"), \
+             patch("labwatch.wizard.shutil.which", return_value=None), \
+             patch("labwatch.wizard.click.echo"), \
+             patch("labwatch.wizard.click.secho") as mock_secho:
+            _warn_missing_tool("ping")
+        output = " ".join(str(c) for c in mock_secho.call_args_list)
+        assert "sudo apt install iputils-ping" in output
+
+    def test_unknown_check_does_nothing(self):
+        with patch("labwatch.wizard.sys.platform", "linux"), \
+             patch("labwatch.wizard.click.echo") as mock_echo:
+            _warn_missing_tool("nonexistent_module")
+        mock_echo.assert_not_called()
