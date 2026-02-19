@@ -1062,45 +1062,27 @@ def _section_systemd(config: dict, *, from_menu: bool = False) -> None:
     for u in config["checks"]["systemd"]["units"]:
         already.add(u if isinstance(u, str) else u.get("name", ""))
 
-    # --- Auto-discovered services ---
+    # Collect all discovered unit base names for fuzzy-match later
+    discovered_names: List[str] = []
     if discovered:
-        # Show recognized homelab services first (these are the ones users
-        # most likely want), then other active services.
+        discovered_names = [
+            u["unit"].replace(".service", "")
+            for u in discovered if u["state"] == "active"
+        ]
+
+    # --- Auto-discovered services (checkbox UI) ---
+    if discovered:
         known_active = [u for u in discovered
                         if u["label"] and u["state"] == "active"
                         and u["unit"].replace(".service", "") not in already]
-        if known_active:
-            click.echo()
-            click.secho("  Detected homelab services:", bold=True)
-            for i, u in enumerate(known_active, 1):
-                base = u["unit"].replace(".service", "")
-                click.echo(f"    {i}. {base} — {u['label']}")
-
-            if _prompt_yn("  Add all detected services?", default=True):
-                for u in known_active:
-                    base = u["unit"].replace(".service", "")
-                    already.add(base)
-                    config["checks"]["systemd"]["units"].append(base)
-            elif _prompt_yn("  Pick individually?", default=True):
-                for u in known_active:
-                    base = u["unit"].replace(".service", "")
-                    if _prompt_yn(f"    Monitor {base} ({u['label']})?", default=True):
-                        already.add(base)
-                        config["checks"]["systemd"]["units"].append(base)
-
-        # Offer other running (non-known) services
         other_active = [u for u in discovered
                         if u["label"] is None and u["state"] == "active"
                         and u["unit"].replace(".service", "") not in already]
-        if other_active and _prompt_yn(
-            f"\n  {len(other_active)} other running service(s) found. Browse them?",
-            default=False,
-        ):
-            for u in other_active:
-                base = u["unit"].replace(".service", "")
-                if _prompt_yn(f"    Monitor {base}?", default=False):
-                    already.add(base)
-                    config["checks"]["systemd"]["units"].append(base)
+
+        if known_active or other_active:
+            _systemd_checkbox_select(
+                config, already, known_active, other_active,
+            )
 
     # --- Manual additions ---
     click.secho(
@@ -1117,6 +1099,10 @@ def _section_systemd(config: dict, *, from_menu: bool = False) -> None:
         if not unit.strip():
             break
         name = unit.strip()
+
+        # Validate the unit name
+        _validate_systemd_unit(name, discovered_names)
+
         sev = click.prompt(
             f"    Severity if '{name}' is down",
             type=click.Choice(["critical", "warning"]),
@@ -1127,6 +1113,157 @@ def _section_systemd(config: dict, *, from_menu: bool = False) -> None:
             config["checks"]["systemd"]["units"].append(name)
         else:
             config["checks"]["systemd"]["units"].append({"name": name, "severity": sev})
+
+
+def _systemd_checkbox_select(
+    config: dict,
+    already: set,
+    known_active: List[Dict],
+    other_active: List[Dict],
+) -> None:
+    """Show a questionary checkbox of discovered services.
+
+    Known services are pre-checked; other services are unchecked.
+    Falls back to per-service y/n prompts if questionary is unavailable.
+    """
+    try:
+        import questionary
+    except ImportError:
+        _systemd_checkbox_fallback(config, already, known_active, other_active)
+        return
+
+    choices = []
+
+    if known_active and other_active:
+        choices.append(questionary.Separator("── Recognized homelab services ──"))
+
+    for u in known_active:
+        base = u["unit"].replace(".service", "")
+        choices.append(questionary.Choice(
+            title=f"{base} \u2014 {u['label']}",
+            value=base,
+            checked=True,
+        ))
+
+    if known_active and other_active:
+        choices.append(questionary.Separator("── Other active services ──"))
+
+    for u in other_active:
+        base = u["unit"].replace(".service", "")
+        choices.append(questionary.Choice(
+            title=base,
+            value=base,
+            checked=False,
+        ))
+
+    click.echo()
+    click.secho("  Select services to monitor:", bold=True)
+    click.secho(
+        "  Use arrow keys to move, space to toggle, enter to confirm.",
+        dim=True,
+    )
+
+    try:
+        selected = questionary.checkbox(
+            "Services:",
+            choices=choices,
+        ).ask()
+    except (EOFError, KeyboardInterrupt):
+        return
+
+    if selected is None:
+        return
+
+    for name in selected:
+        if name not in already:
+            already.add(name)
+            config["checks"]["systemd"]["units"].append(name)
+
+
+def _systemd_checkbox_fallback(
+    config: dict,
+    already: set,
+    known_active: List[Dict],
+    other_active: List[Dict],
+) -> None:
+    """Fallback when questionary is unavailable: per-service y/n prompts."""
+    if known_active:
+        click.echo()
+        click.secho("  Detected homelab services:", bold=True)
+        for i, u in enumerate(known_active, 1):
+            base = u["unit"].replace(".service", "")
+            click.echo(f"    {i}. {base} \u2014 {u['label']}")
+
+        if _prompt_yn("  Add all detected services?", default=True):
+            for u in known_active:
+                base = u["unit"].replace(".service", "")
+                already.add(base)
+                config["checks"]["systemd"]["units"].append(base)
+        elif _prompt_yn("  Pick individually?", default=True):
+            for u in known_active:
+                base = u["unit"].replace(".service", "")
+                if _prompt_yn(f"    Monitor {base} ({u['label']})?", default=True):
+                    already.add(base)
+                    config["checks"]["systemd"]["units"].append(base)
+
+    if other_active and _prompt_yn(
+        f"\n  {len(other_active)} other running service(s) found. Browse them?",
+        default=True,
+    ):
+        for u in other_active:
+            base = u["unit"].replace(".service", "")
+            if _prompt_yn(f"    Monitor {base}?", default=False):
+                already.add(base)
+                config["checks"]["systemd"]["units"].append(base)
+
+
+def _validate_systemd_unit(name: str, discovered_names: List[str]) -> None:
+    """Check if a unit exists and show suggestions on typo."""
+    import subprocess as _sp
+
+    try:
+        proc = _sp.run(
+            ["systemctl", "cat", name],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode == 0:
+            return  # unit exists, nothing to warn about
+    except (FileNotFoundError, _sp.TimeoutExpired):
+        return  # systemctl not available — skip validation
+
+    # Unit not found — try to suggest similar names
+    suggestions = _fuzzy_match_units(name, discovered_names)
+    if suggestions:
+        click.secho(f"  \u26a0 Unit '{name}' not found. Did you mean one of these?", fg="yellow")
+        for s in suggestions[:5]:
+            click.echo(f"    - {s}")
+    else:
+        click.secho(f"  \u26a0 Unit '{name}' not found on this system.", fg="yellow")
+    click.secho("  (Adding it anyway — you may be configuring for a remote host.)", dim=True)
+
+
+def _fuzzy_match_units(name: str, candidates: List[str]) -> List[str]:
+    """Return candidates that are similar to *name* (substring/prefix match)."""
+    name_lower = name.lower()
+    scored: List[Tuple[int, str]] = []
+    for c in candidates:
+        c_lower = c.lower()
+        if c_lower == name_lower:
+            continue
+        # Exact prefix match scores highest
+        if c_lower.startswith(name_lower) or name_lower.startswith(c_lower):
+            scored.append((0, c))
+        # Substring match
+        elif name_lower in c_lower or c_lower in name_lower:
+            scored.append((1, c))
+        # Character-level similarity: shared chars / max length
+        else:
+            shared = sum(1 for ch in name_lower if ch in c_lower)
+            ratio = shared / max(len(name_lower), len(c_lower))
+            if ratio >= 0.6:
+                scored.append((2, c))
+    scored.sort()
+    return [s for _, s in scored]
 
 
 def _section_process(config: dict, *, from_menu: bool = False) -> None:

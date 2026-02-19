@@ -170,6 +170,7 @@ KNOWN_SYSTEMD_SERVICES: Dict[str, str] = {
     "fail2ban": "Fail2ban",
     "crowdsec": "CrowdSec",
     # Core system (things users may still want to monitor)
+    "dropbear": "Dropbear SSH",
     "sshd": "SSH",
     "ssh": "SSH",
     "cron": "Cron",
@@ -213,6 +214,20 @@ _SYSTEMD_NOISE_PREFIXES = (
     "wpa_supplicant",
     "ModemManager",
     "plymouth-",
+    # DietPi / Debian plumbing
+    "dietpi-",
+    "ifup@",
+    "ifupdown-",
+    "fake-hwclock",
+    "apt-daily",
+    "dpkg",
+    "e2scrub",
+    "fstrim",
+    "logrotate",
+    "man-db",
+    # Rescue / emergency targets
+    "rescue",
+    "emergency",
 )
 
 
