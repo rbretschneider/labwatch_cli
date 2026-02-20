@@ -1345,8 +1345,19 @@ def doctor_cmd(ctx):
 
     if tool_checks:
         import shutil
+        # Debian/DietPi: non-root users don't have /usr/sbin in PATH,
+        # but tools like smartctl and ip live there.
+        _SBIN_DIRS = ["/usr/sbin", "/sbin"]
         for tool, check_name in tool_checks:
-            if shutil.which(tool):
+            found = shutil.which(tool)
+            if not found:
+                # Check sbin dirs that non-root PATH may miss
+                for sbin in _SBIN_DIRS:
+                    candidate = os.path.join(sbin, tool)
+                    if os.path.isfile(candidate):
+                        found = candidate
+                        break
+            if found:
                 _ok(f"{tool} found (used by {check_name} check)")
             else:
                 _fail(f"{tool} not found — required by {check_name} check")
