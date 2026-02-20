@@ -438,10 +438,10 @@ class TestVerifyCronEntries:
         fake_bin = tmp_path / "labwatch"
         fake_bin.write_text("#!/bin/sh\n")
 
-        # First call: cron daemon check. Subsequent: sudo -n check.
+        # First call: cron daemon check. Subsequent: sudo -n -l check.
         mock_run.side_effect = [
             MagicMock(stdout="active\n", returncode=0),  # systemctl is-active cron
-            MagicMock(stdout="", returncode=0),           # sudo -n labwatch --help
+            MagicMock(stdout="", returncode=0),           # sudo -n -l labwatch system-update
         ]
 
         entry = f"0 0 * * 0 sudo {fake_bin} system-update # labwatch:system-update"
@@ -457,7 +457,7 @@ class TestVerifyCronEntries:
 
         mock_run.side_effect = [
             MagicMock(stdout="active\n", returncode=0),  # systemctl is-active cron
-            MagicMock(stdout="", stderr="password required", returncode=1),  # sudo -n
+            MagicMock(stdout="", stderr="password required", returncode=1),  # sudo -n -l
         ]
 
         entry = f"0 0 * * 0 sudo {fake_bin} system-update # labwatch:system-update"

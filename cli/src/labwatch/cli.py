@@ -1129,30 +1129,39 @@ def _verify_cron_entries(entries, console, _ok, _warn, _fail):
                 else:
                     _warn(f"Binary not in PATH: {binary} — cron may not find it")
 
-        # Collect sudo entries for checking after
+        # Collect sudo entries with full command for checking after
         if uses_sudo:
-            sudo_entries.append(binary)
+            # cmd_parts is e.g. ["/path/labwatch", "system-update"]
+            sudo_entries.append(tuple(cmd_parts))
 
-    # Check sudo NOPASSWD (once per unique binary)
-    for binary in set(sudo_entries):
+    # Check sudo NOPASSWD (once per unique command)
+    seen_sudo = set()
+    for cmd_tuple in sudo_entries:
+        if cmd_tuple in seen_sudo:
+            continue
+        seen_sudo.add(cmd_tuple)
+        binary = cmd_tuple[0]
+        full_cmd = " ".join(cmd_tuple)
         try:
+            # sudo -n -l checks if the command is allowed by sudoers
+            # without executing it and without prompting for a password
             proc = subprocess.run(
-                ["sudo", "-n", binary, "--help"],
+                ["sudo", "-n", "-l"] + list(cmd_tuple),
                 capture_output=True, text=True, timeout=5,
             )
             if proc.returncode == 0:
-                _ok(f"sudo NOPASSWD works for: {binary}")
+                _ok(f"sudo NOPASSWD works for: {full_cmd}")
             else:
-                _fail(f"sudo requires a password for: {binary}")
+                _fail(f"sudo requires a password for: {full_cmd}")
                 console.print("    Cron cannot enter passwords — the job will hang/fail")
                 console.print("    Fix: [bold]sudo visudo -f /etc/sudoers.d/labwatch[/bold]")
                 import getpass
                 user = getpass.getuser()
-                console.print(f"    Add:  [bold]{user} ALL=(root) NOPASSWD: {binary} system-update[/bold]")
+                console.print(f"    Add:  [bold]{user} ALL=(root) NOPASSWD: {full_cmd}[/bold]")
         except FileNotFoundError:
             _warn("sudo command not found — cannot verify NOPASSWD")
         except Exception:
-            _warn(f"Could not test sudo for: {binary}")
+            _warn(f"Could not test sudo for: {full_cmd}")
 
 
 @cli.command("doctor")
