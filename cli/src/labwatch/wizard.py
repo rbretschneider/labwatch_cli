@@ -2218,15 +2218,28 @@ def _offer_scheduling(config: dict) -> None:
 
 
 def _print_done() -> None:
-    """Print the final completion block."""
+    """Print the final completion block and run doctor to verify everything."""
     _section_break()
     click.secho("Setup complete!", fg="green", bold=True)
+    click.echo()
+
+    # Run doctor to verify the installation before the user walks away
+    click.secho("Running labwatch doctor to verify your setup...", bold=True)
+    click.echo()
+    import subprocess as _sp
+    from labwatch.scheduler import resolve_labwatch_path
+    lw_path = resolve_labwatch_path()
+    try:
+        _sp.run(lw_path.split() + ["doctor"], timeout=30)
+    except Exception:
+        click.echo("  (could not run doctor — run it manually: labwatch doctor)")
+
     click.echo()
     click.secho("Useful commands", bold=True)
     click.echo("  labwatch check               # run all checks once")
     click.echo("  labwatch check --only system  # run one check module")
+    click.echo("  labwatch doctor              # re-run the health check above")
     click.echo("  labwatch summarize            # see what's being monitored")
-    click.echo("  labwatch validate             # verify your config")
     click.echo("  labwatch edit                 # open config in your editor")
     click.echo("  labwatch schedule list        # view cron schedule")
     click.echo("  labwatch init                 # re-run this wizard")

@@ -1088,9 +1088,12 @@ def _verify_cron_entries(entries, console, _ok, _warn, _fail):
         _ok("Cron daemon is running")
     else:
         _fail("Cron daemon does not appear to be running")
-        console.print("    Check with: [bold]systemctl status cron[/bold]")
+        console.print("    Fix: [bold]sudo systemctl enable --now cron[/bold]")
 
-    # --- Per-entry checks ---
+    # --- Per-entry checks (deduplicate by binary path) ---
+    seen_binaries = set()
+    sudo_entries = []
+
     for entry in entries:
         # Parse: strip the cron expression (first 5 fields) and marker
         parts = entry.split()
@@ -1109,44 +1112,47 @@ def _verify_cron_entries(entries, console, _ok, _warn, _fail):
         # The binary is the first token (could be a path or "python -m labwatch")
         binary = cmd_parts[0]
 
-        # Check binary exists
-        if os.path.isabs(binary):
-            if os.path.isfile(binary):
-                _ok(f"Binary exists: {binary}")
-            else:
-                _fail(f"Binary not found: {binary}")
-                console.print("    labwatch may have been reinstalled to a different path")
-                console.print(f"    Fix: [bold]labwatch schedule remove && labwatch schedule check --every 5m[/bold]")
-        else:
-            # Relative command like "python" — check it's findable
-            if shutil.which(binary):
-                _ok(f"Binary in PATH: {binary}")
-            else:
-                _warn(f"Binary not in PATH: {binary} — cron may not find it")
-
-        # Check sudo NOPASSWD
-        if uses_sudo:
-            # Build the actual command that cron would run (without cron expr)
-            # e.g. "sudo /usr/bin/labwatch system-update"
-            sudo_cmd = " ".join(cmd_parts)
-            try:
-                proc = subprocess.run(
-                    ["sudo", "-n", binary, "--help"],
-                    capture_output=True, text=True, timeout=5,
-                )
-                if proc.returncode == 0:
-                    _ok(f"sudo NOPASSWD works for: {binary}")
+        # Check binary exists (once per unique path)
+        if binary not in seen_binaries:
+            seen_binaries.add(binary)
+            if os.path.isabs(binary):
+                if os.path.isfile(binary):
+                    _ok(f"Binary exists: {binary}")
                 else:
-                    _fail(f"sudo requires a password for: {binary}")
-                    console.print("    Cron cannot enter passwords — the job will hang/fail")
-                    console.print("    Fix: [bold]sudo visudo -f /etc/sudoers.d/labwatch[/bold]")
-                    import getpass
-                    user = getpass.getuser()
-                    console.print(f"    Add:  [bold]{user} ALL=(root) NOPASSWD: {binary} system-update[/bold]")
-            except FileNotFoundError:
-                _warn("sudo command not found — cannot verify NOPASSWD")
-            except Exception:
-                _warn(f"Could not test sudo for: {binary}")
+                    _fail(f"Binary not found: {binary}")
+                    console.print("    labwatch may have been reinstalled to a different path")
+                    console.print(f"    Fix: [bold]labwatch schedule remove && labwatch schedule check --every 5m[/bold]")
+            else:
+                # Relative command like "python" — check it's findable
+                if shutil.which(binary):
+                    _ok(f"Binary in PATH: {binary}")
+                else:
+                    _warn(f"Binary not in PATH: {binary} — cron may not find it")
+
+        # Collect sudo entries for checking after
+        if uses_sudo:
+            sudo_entries.append(binary)
+
+    # Check sudo NOPASSWD (once per unique binary)
+    for binary in set(sudo_entries):
+        try:
+            proc = subprocess.run(
+                ["sudo", "-n", binary, "--help"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if proc.returncode == 0:
+                _ok(f"sudo NOPASSWD works for: {binary}")
+            else:
+                _fail(f"sudo requires a password for: {binary}")
+                console.print("    Cron cannot enter passwords — the job will hang/fail")
+                console.print("    Fix: [bold]sudo visudo -f /etc/sudoers.d/labwatch[/bold]")
+                import getpass
+                user = getpass.getuser()
+                console.print(f"    Add:  [bold]{user} ALL=(root) NOPASSWD: {binary} system-update[/bold]")
+        except FileNotFoundError:
+            _warn("sudo command not found — cannot verify NOPASSWD")
+        except Exception:
+            _warn(f"Could not test sudo for: {binary}")
 
 
 @cli.command("doctor")
@@ -1236,6 +1242,7 @@ def doctor_cmd(ctx):
         _fail(f"Config validation failed ({len(errors)} error(s))")
         for err in errors:
             console.print(f"    {err}")
+        console.print("    Fix: [bold]labwatch edit[/bold] or [bold]labwatch init[/bold]")
     else:
         _ok("Config is valid")
 
@@ -1268,10 +1275,14 @@ def doctor_cmd(ctx):
                     _warn(f"ntfy server returned {resp.status_code}")
             except Exception as e:
                 _fail(f"Cannot reach ntfy server: {e}")
+                console.print(f"    Check that the server URL is correct and reachable")
+                console.print(f"    Test manually: [bold]curl -s {server}[/bold]")
         else:
             _fail("ntfy enabled but server/topic not configured")
+            console.print("    Fix: [bold]labwatch init --only notifications[/bold]")
     else:
         _warn("No notification backend enabled")
+        console.print("    Fix: [bold]labwatch init --only notifications[/bold]")
 
     # --- Heartbeat ---
     hb_url = cfg.get("notifications", {}).get("heartbeat_url", "")
@@ -1301,6 +1312,8 @@ def doctor_cmd(ctx):
             _ok("Docker daemon reachable")
         except Exception as e:
             _fail(f"Docker daemon not reachable: {e}")
+            console.print("    Fix: [bold]sudo systemctl start docker[/bold]")
+            console.print("    Or add your user to the docker group: [bold]sudo usermod -aG docker $USER[/bold]")
     else:
         console.print("  [dim]Docker check disabled — skipped[/dim]")
 
@@ -1309,6 +1322,14 @@ def doctor_cmd(ctx):
     # --- System tools ---
     console.print("[bold]System tools[/bold]")
     checks_cfg = cfg.get("checks", {})
+
+    _TOOL_INSTALL_HINT = {
+        "systemctl": "sudo apt install systemd",
+        "pgrep": "sudo apt install procps",
+        "ping": "sudo apt install iputils-ping",
+        "ip": "sudo apt install iproute2",
+        "smartctl": "sudo apt install smartmontools",
+    }
 
     tool_checks = []
     if checks_cfg.get("systemd", {}).get("enabled"):
@@ -1329,6 +1350,9 @@ def doctor_cmd(ctx):
                 _ok(f"{tool} found (used by {check_name} check)")
             else:
                 _fail(f"{tool} not found — required by {check_name} check")
+                hint = _TOOL_INSTALL_HINT.get(tool)
+                if hint:
+                    console.print(f"    Fix: [bold]{hint}[/bold]")
     else:
         console.print("  [dim]No tool-dependent checks enabled[/dim]")
 

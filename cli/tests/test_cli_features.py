@@ -467,12 +467,59 @@ class TestVerifyCronEntries:
     @patch("shutil.which", return_value="/usr/bin/systemctl")
     @patch("subprocess.run")
     def test_cron_daemon_not_running(self, mock_run, mock_which):
-        """Should fail if cron daemon is not active."""
+        """Should fail if cron daemon is not active and show fix hint."""
         mock_run.side_effect = [
             MagicMock(stdout="inactive\n", returncode=3),  # systemctl is-active cron
             MagicMock(stdout="inactive\n", returncode=3),  # systemctl is-active crond
         ]
 
         entry = "*/5 * * * * /usr/bin/labwatch check # labwatch:check"
-        oks, warns, fails, _ = self._run([entry])
+        oks, warns, fails, output = self._run([entry])
         assert any("Cron daemon does not appear to be running" in m for m in fails)
+        assert "systemctl enable --now cron" in output
+
+    @patch("shutil.which", return_value="/usr/bin/systemctl")
+    @patch("subprocess.run")
+    def test_sudo_password_shows_visudo_fix(self, mock_run, mock_which, tmp_path):
+        """sudo failure should show copy-paste visudo fix."""
+        fake_bin = tmp_path / "labwatch"
+        fake_bin.write_text("#!/bin/sh\n")
+
+        mock_run.side_effect = [
+            MagicMock(stdout="active\n", returncode=0),
+            MagicMock(stdout="", stderr="password required", returncode=1),
+        ]
+
+        entry = f"0 0 * * 0 sudo {fake_bin} system-update # labwatch:system-update"
+        oks, warns, fails, output = self._run([entry])
+        assert "visudo" in output
+        assert "NOPASSWD" in output
+
+    @patch("shutil.which", return_value="/usr/bin/systemctl")
+    @patch("subprocess.run")
+    def test_binary_missing_shows_fix(self, mock_run, mock_which, tmp_path):
+        """Missing binary should show schedule remove/re-add fix."""
+        mock_run.return_value = MagicMock(stdout="active\n", returncode=0)
+
+        entry = f"*/5 * * * * {tmp_path}/gone_labwatch check # labwatch:check"
+        oks, warns, fails, output = self._run([entry])
+        assert any("Binary not found" in m for m in fails)
+        assert "schedule remove" in output
+
+    @patch("shutil.which", return_value="/usr/bin/systemctl")
+    @patch("subprocess.run")
+    def test_deduplicates_same_binary(self, mock_run, mock_which, tmp_path):
+        """Same binary across multiple entries should only be checked once."""
+        fake_bin = tmp_path / "labwatch"
+        fake_bin.write_text("#!/bin/sh\n")
+
+        mock_run.return_value = MagicMock(stdout="active\n", returncode=0)
+
+        entries = [
+            f"*/5 * * * * {fake_bin} check --only http # labwatch:check:http",
+            f"*/30 * * * * {fake_bin} check --only system # labwatch:check:system",
+            f"0 0 * * * {fake_bin} docker-update # labwatch:docker-update",
+        ]
+        oks, warns, fails, _ = self._run(entries)
+        binary_oks = [m for m in oks if "Binary exists" in m]
+        assert len(binary_oks) == 1  # reported once, not three times
