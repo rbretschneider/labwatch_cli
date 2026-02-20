@@ -2182,10 +2182,17 @@ def _offer_scheduling(config: dict) -> None:
         for default_interval, _label, modules, _choices in active_tiers:
             schedule_plan.append((default_interval, modules))
 
-    # Install cron entries
+    # Install cron entries — clear stale ones first so re-runs with
+    # different module selections don't leave old entries behind.
     click.echo()
     try:
         from labwatch import scheduler
+
+        # Remove old entries for each subcommand we're about to reinstall.
+        # "check" matches all check variants (check:docker,system, check:http, etc.)
+        scheduler.remove_entries("check")
+        scheduler.remove_entries("docker-update")
+        scheduler.remove_entries("system-update")
 
         for interval, modules in schedule_plan:
             line = scheduler.add_entry("check", interval, modules=modules)
