@@ -444,6 +444,17 @@ class TestWarnMissingTool:
         output = " ".join(str(c) for c in mock_secho.call_args_list)
         assert "sudo apt install iputils-ping" in output
 
+    def test_no_warning_when_tool_in_sbin(self):
+        """smartctl not in PATH but found in /usr/sbin — no warning."""
+        import os as _os
+        expected = _os.path.join("/usr/sbin", "smartctl")
+        with patch("labwatch.wizard.sys.platform", "linux"), \
+             patch("labwatch.wizard.shutil.which", return_value=None), \
+             patch("labwatch.wizard.os.path.isfile", side_effect=lambda p: p == expected), \
+             patch("labwatch.wizard.click.secho") as mock_secho:
+            _warn_missing_tool("smart")
+        mock_secho.assert_not_called()
+
     def test_unknown_check_does_nothing(self):
         with patch("labwatch.wizard.sys.platform", "linux"), \
              patch("labwatch.wizard.click.echo") as mock_echo:

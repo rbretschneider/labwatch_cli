@@ -239,6 +239,11 @@ def _warn_missing_tool(check_name: str) -> None:
     tool, install_hint = entry
     if shutil.which(tool):
         return
+    # Debian/DietPi: non-root users don't have /usr/sbin in PATH,
+    # but tools like smartctl live there.
+    for sbin in ("/usr/sbin", "/sbin"):
+        if os.path.isfile(os.path.join(sbin, tool)):
+            return
     click.echo()
     click.secho(
         f"  Warning: '{tool}' is not installed on this system.",
