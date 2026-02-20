@@ -62,8 +62,9 @@ CHECK_DESCRIPTIONS = {
         "  the process is not found."
     ),
     "updates": (
-        "Counts pending system package updates (apt/dnf/yum). Alerts\n"
-        "  when pending updates exceed your thresholds."
+        "Alerts when uninstalled package updates are available\n"
+        "  (apt/dnf/yum). Pairs with 'system updates' which actually\n"
+        "  installs them automatically."
     ),
     "command": (
         "Runs a shell command and checks the exit code. Non-zero means\n"
@@ -74,8 +75,9 @@ CHECK_DESCRIPTIONS = {
         "  failing health, high temps, or excessive wear."
     ),
     "system_update": (
-        "Runs apt-get upgrade automatically to keep your server patched.\n"
-        "  Supports autoremove and auto-reboot on kernel updates."
+        "Installs available package updates automatically (apt-get\n"
+        "  upgrade). Supports autoremove and auto-reboot on kernel\n"
+        "  updates."
     ),
 }
 
@@ -1337,7 +1339,7 @@ def _section_network(config: dict, *, from_menu: bool = False) -> None:
 
 def _section_updates(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
-    click.secho("Package updates monitoring", bold=True)
+    click.secho("Pending package updates (alert only)", bold=True)
     _print_description("updates")
 
     existing = config.get("checks", {}).get("updates", {})
@@ -1509,7 +1511,7 @@ def _warn_if_sudo_needed() -> bool:
 
 def _section_system_update(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
-    click.secho("System updates (apt-get)", bold=True)
+    click.secho("Automatic system updates (apt-get)", bold=True)
     _print_description("system_update")
 
     existing = config.get("update", {}).get("system", {})
@@ -1704,7 +1706,7 @@ MODULES.extend([
     {
         "key": "updates",
         "label": "Package updates",
-        "short_desc": "pending system updates count",
+        "short_desc": "alerts when uninstalled updates are available",
         "default_enabled": False,
         "wizard_fn": _section_updates,
         "config_path": "checks.updates",
@@ -1720,7 +1722,7 @@ MODULES.extend([
     {
         "key": "system_update",
         "label": "System updates",
-        "short_desc": "automated apt-get upgrade (Debian/DietPi)",
+        "short_desc": "installs updates automatically via apt-get upgrade",
         "default_enabled": False,
         "wizard_fn": _section_system_update,
         "config_path": "update.system",
