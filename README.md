@@ -52,13 +52,15 @@ Requires **Python 3.8+**.
 
 ```bash
 # Debian 12+ / DietPi / Raspberry Pi OS (Bookworm)
-sudo apt install pipx
+sudo apt install pipx python3-dev gcc
 pipx ensurepath   # adds ~/.local/bin to your PATH
 source ~/.bashrc  # or open a new shell
 
 # Install labwatch
 pipx install labwatch
 ```
+
+> **Why `python3-dev gcc`?** labwatch uses [psutil](https://github.com/giampaolo/psutil) for system monitoring (disk, memory, CPU), which has a C extension that needs to be compiled on ARM. These packages are only needed at install time.
 
 > **Older systems** (Debian 11, Ubuntu 22.04 and earlier) where `apt install pipx` isn't available:
 > ```bash
