@@ -1,5 +1,6 @@
 """Auto-discovery for Docker containers and systemd services."""
 
+import os
 import subprocess
 import sys
 from typing import Dict, List, Optional, Tuple
@@ -231,6 +232,41 @@ _SYSTEMD_NOISE_PREFIXES = (
 )
 
 
+def _run_list_units() -> Optional[str]:
+    """Run ``systemctl list-units`` and return its stdout.
+
+    Tries plain systemctl first.  When running as non-root and the
+    plain call fails, retries with ``sudo -n`` so that units only
+    visible to root (e.g. ``wg-quick@wg0``) are still discovered.
+    """
+    _is_root = hasattr(os, "geteuid") and os.geteuid() == 0
+    cmd_base = ["systemctl", "list-units", "--type=service", "--all",
+                "--no-pager", "--no-legend"]
+
+    try:
+        proc = subprocess.run(cmd_base, capture_output=True, text=True, timeout=10)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+    if proc.returncode == 0 and proc.stdout.strip():
+        return proc.stdout
+
+    # Non-root fallback: try sudo -n.
+    if not _is_root:
+        try:
+            proc = subprocess.run(
+                ["sudo", "-n"] + cmd_base,
+                capture_output=True, text=True, timeout=10,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                return proc.stdout
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    # Return whatever we got (may be empty).
+    return proc.stdout if proc.returncode == 0 else None
+
+
 def discover_systemd_units() -> Optional[List[Dict]]:
     """Discover running and enabled systemd service units.
 
@@ -244,22 +280,14 @@ def discover_systemd_units() -> Optional[List[Dict]]:
     if sys.platform == "win32":
         return None
 
-    try:
-        proc = subprocess.run(
-            ["systemctl", "list-units", "--type=service", "--all",
-             "--no-pager", "--no-legend"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-
-    if proc.returncode != 0:
+    output = _run_list_units()
+    if output is None:
         return None
 
     units: List[Dict] = []
     seen = set()
 
-    for line in proc.stdout.strip().splitlines():
+    for line in output.strip().splitlines():
         parts = line.split()
         if len(parts) < 4:
             continue

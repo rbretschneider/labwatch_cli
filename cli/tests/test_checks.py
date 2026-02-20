@@ -20,6 +20,7 @@ class TestSystemdCheck:
         cfg = _make_config("systemd", {"units": units})
         return SystemdCheck(cfg).run()
 
+    @patch("labwatch.checks.systemd_check._is_root", True)
     @patch("labwatch.checks.systemd_check.subprocess.run")
     def test_active_unit_ok(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="active\n")
@@ -28,12 +29,14 @@ class TestSystemdCheck:
         assert results[0].severity == Severity.OK
         assert results[0].name == "systemd:nginx"
 
+    @patch("labwatch.checks.systemd_check._is_root", True)
     @patch("labwatch.checks.systemd_check.subprocess.run")
     def test_inactive_unit_critical(self, mock_run):
         mock_run.return_value = MagicMock(returncode=3, stdout="inactive\n")
         results = self._run(["nginx"])
         assert results[0].severity == Severity.CRITICAL
 
+    @patch("labwatch.checks.systemd_check._is_root", True)
     @patch("labwatch.checks.systemd_check.subprocess.run")
     def test_severity_override_warning(self, mock_run):
         mock_run.return_value = MagicMock(returncode=3, stdout="inactive\n")
@@ -41,12 +44,14 @@ class TestSystemdCheck:
         assert results[0].severity == Severity.WARNING
         assert results[0].name == "systemd:caddy"
 
+    @patch("labwatch.checks.systemd_check._is_root", True)
     @patch("labwatch.checks.systemd_check.subprocess.run")
     def test_string_unit_entry(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="active\n")
         results = self._run(["docker"])
         assert results[0].name == "systemd:docker"
 
+    @patch("labwatch.checks.systemd_check._is_root", True)
     @patch("labwatch.checks.systemd_check.subprocess.run")
     def test_multiple_units(self, mock_run):
         mock_run.side_effect = [
@@ -68,12 +73,49 @@ class TestSystemdCheck:
         assert results[0].severity == Severity.UNKNOWN
         assert "not available" in results[0].message
 
+    @patch("labwatch.checks.systemd_check._is_root", True)
     @patch("labwatch.checks.systemd_check.subprocess.run",
            side_effect=subprocess.TimeoutExpired("systemctl", 10))
     def test_timeout(self, mock_run):
         results = self._run(["nginx"])
         assert results[0].severity == Severity.CRITICAL
         assert "Timeout" in results[0].message
+
+    @patch("labwatch.checks.systemd_check._is_root", False)
+    @patch("labwatch.checks.systemd_check.subprocess.run")
+    def test_sudo_fallback_finds_active_unit(self, mock_run):
+        """Non-root: plain systemctl returns inactive, sudo -n returns active."""
+        mock_run.side_effect = [
+            MagicMock(returncode=3, stdout="inactive\n"),   # plain
+            MagicMock(returncode=0, stdout="active\n"),     # sudo -n
+        ]
+        results = self._run(["wg-quick@wg0"])
+        assert results[0].severity == Severity.OK
+        assert results[0].name == "systemd:wg-quick@wg0"
+        # Verify sudo -n was attempted
+        assert mock_run.call_count == 2
+        assert mock_run.call_args_list[1][0][0][:2] == ["sudo", "-n"]
+
+    @patch("labwatch.checks.systemd_check._is_root", False)
+    @patch("labwatch.checks.systemd_check.subprocess.run")
+    def test_sudo_fallback_also_fails(self, mock_run):
+        """Non-root: both plain and sudo return inactive — report as failed."""
+        mock_run.return_value = MagicMock(returncode=3, stdout="inactive\n")
+        results = self._run(["wg-quick@wg0"])
+        assert results[0].severity == Severity.CRITICAL
+        assert "inactive" in results[0].message
+
+    @patch("labwatch.checks.systemd_check._is_root", False)
+    @patch("labwatch.checks.systemd_check.subprocess.run")
+    def test_sudo_fallback_sudo_missing(self, mock_run):
+        """Non-root: sudo not installed — gracefully falls back."""
+        mock_run.side_effect = [
+            MagicMock(returncode=3, stdout="inactive\n"),   # plain
+            FileNotFoundError("sudo"),                       # sudo missing
+        ]
+        results = self._run(["wg-quick@wg0"])
+        assert results[0].severity == Severity.CRITICAL
+        assert "inactive" in results[0].message
 
 
 # --- ProcessCheck -----------------------------------------------------------

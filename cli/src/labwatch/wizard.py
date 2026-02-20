@@ -1189,15 +1189,20 @@ def _validate_systemd_unit(name: str, discovered_names: List[str]) -> None:
     """Check if a unit exists and show suggestions on typo."""
     import subprocess as _sp
 
-    try:
-        proc = _sp.run(
-            ["systemctl", "cat", name],
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode == 0:
-            return  # unit exists, nothing to warn about
-    except (FileNotFoundError, _sp.TimeoutExpired):
-        return  # systemctl not available — skip validation
+    # Try plain systemctl, then sudo -n fallback (some units like
+    # wg-quick@wg0 are only visible to root on hardened systems).
+    for cmd in (["systemctl", "cat", name],
+                ["sudo", "-n", "systemctl", "cat", name]):
+        try:
+            proc = _sp.run(cmd, capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                return  # unit exists, nothing to warn about
+        except FileNotFoundError:
+            if cmd[0] == "systemctl":
+                return  # systemctl not available — skip validation
+            continue  # sudo not installed, skip fallback
+        except _sp.TimeoutExpired:
+            return
 
     # Unit not found — try to suggest similar names
     suggestions = _fuzzy_match_units(name, discovered_names)
