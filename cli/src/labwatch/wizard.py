@@ -15,103 +15,67 @@ from labwatch.discovery import (
     suggest_endpoints,
 )
 
-# Detailed descriptions shown before each check's enable prompt.  These are
-# written for someone who may not know what each subsystem is or why they'd
-# want to monitor it.
+# Short descriptions shown before each check's enable prompt.
 CHECK_DESCRIPTIONS = {
     "system": (
-        "Checks disk space on every mounted partition, RAM usage, and CPU\n"
-        "  load. You set warning and critical thresholds (e.g. warn at 80%,\n"
-        "  critical at 90%). If any resource crosses a threshold, you get\n"
-        "  an alert with the exact usage and how much headroom is left."
+        "Monitors disk space, RAM, and CPU load. Alerts when usage\n"
+        "  crosses your warning or critical thresholds."
     ),
     "docker": (
-        "If you run any services in Docker containers (Plex, Grafana,\n"
-        "  Pi-hole, etc.), this module keeps an eye on them. It pings the\n"
-        "  Docker daemon to make sure it's responsive, then lists every\n"
-        "  container and reports its status. 'running' is OK; 'paused' or\n"
-        "  'restarting' triggers a warning; anything else (exited, dead)\n"
-        "  triggers a critical alert. Useful for catching crashed containers."
+        "Monitors Docker container status. Alerts on crashed, exited,\n"
+        "  or unhealthy containers."
     ),
     "http": (
-        "Makes an HTTP request to each URL you configure and checks whether\n"
-        "  it responds within the timeout. A 2xx/3xx status code is OK; a\n"
-        "  4xx/5xx, timeout, or connection refusal triggers a critical alert.\n"
-        "  Use this to verify your web apps, APIs, and dashboards are up."
+        "Requests each URL you configure and alerts on timeouts,\n"
+        "  connection failures, or 4xx/5xx responses."
     ),
     "nginx": (
-        "Runs three sub-checks: (1) verifies the Nginx process is running\n"
-        "  (via systemctl or pgrep on the host, or container status in Docker),\n"
-        "  (2) runs 'nginx -t' to validate the config has no syntax errors,\n"
-        "  and (3) hits any endpoint URLs you add to confirm they're reachable."
+        "Checks Nginx is running, validates config (nginx -t), and\n"
+        "  verifies your endpoint URLs are reachable."
     ),
     "certs": (
-        "Connects to each domain on port 443 and checks the TLS certificate\n"
-        "  expiry date. Alerts when a certificate is approaching expiry or\n"
-        "  has already expired. Catches silent certbot/ACME renewal failures\n"
-        "  — if your certs are renewing properly, this check never fires."
+        "Checks TLS certificate expiry for each domain. Alerts before\n"
+        "  certificates expire — catches silent renewal failures."
     ),
     "dns": (
-        "Does a DNS lookup (getaddrinfo) for each domain you list and alerts\n"
-        "  if resolution fails. Catches DNS server outages, misconfigured\n"
-        "  records, or network issues that prevent name resolution."
+        "Does a DNS lookup for each domain and alerts if resolution\n"
+        "  fails."
     ),
     "ping": (
-        "Sends a single ICMP ping to each host and measures round-trip time.\n"
-        "  Alerts as critical if the host doesn't respond within the timeout.\n"
-        "  Good for monitoring routers, gateways, NAS devices, or any host\n"
-        "  where you just need to know 'is it reachable?'."
+        "Pings each host and alerts if it doesn't respond within the\n"
+        "  timeout. Good for routers, gateways, and NAS devices."
     ),
     "network": (
-        "For each network interface you list, checks three things:\n"
-        "  (1) link state — is the interface UP or DOWN?\n"
-        "  (2) IPv4 address — does it have an IP assigned?\n"
-        "  (3) TX bytes — has any traffic been transmitted?\n"
-        "  Useful for VPN tunnels (tun0, wg0), bridges, or secondary NICs\n"
-        "  where you need to know the link is alive and has an address."
+        "Checks link state, IP assignment, and traffic on each network\n"
+        "  interface. Useful for VPN tunnels, bridges, and secondary NICs."
     ),
     "home_assistant": (
-        "Checks your Home Assistant instance by hitting the /api/ endpoint.\n"
-        "  Optionally verifies external access (e.g. via Nabu Casa or your\n"
-        "  own domain) and Google Home cloud API connectivity. If you provide\n"
-        "  a long-lived access token, it can do authenticated health checks."
+        "Checks your Home Assistant /api/ endpoint. Optionally verifies\n"
+        "  external access and Google Home connectivity."
     ),
     "systemd": (
-        "Runs 'systemctl is-active' for each unit you list. Only the 'active'\n"
-        "  state is considered healthy — any other state (inactive, failed,\n"
-        "  activating, deactivating, etc.) triggers an alert. Good for\n"
-        "  services installed via apt/yum that aren't managed by Docker."
+        "Runs 'systemctl is-active' for each unit and alerts on any\n"
+        "  non-active state."
     ),
     "process": (
-        "Uses 'pgrep -x' (or tasklist on Windows) to check if a process\n"
-        "  with the exact name you specify is running. If no matching process\n"
-        "  is found, it triggers a critical alert. Good for daemons that\n"
-        "  don't have a systemd unit, or scripts you expect to always be up."
+        "Checks if a named process is running (via pgrep). Alerts if\n"
+        "  the process is not found."
     ),
     "updates": (
-        "Detects your system package manager (apt, dnf, or yum) and counts\n"
-        "  how many updates are pending. You set thresholds — for example,\n"
-        "  warn at 1+ pending update, critical at 50+. Helps you stay on\n"
-        "  top of security patches without manually checking."
+        "Counts pending system package updates (apt/dnf/yum). Alerts\n"
+        "  when pending updates exceed your thresholds."
     ),
     "command": (
-        "Runs any shell command you define and checks the exit code. Exit 0\n"
-        "  means OK; non-zero means failure. You can also require a specific\n"
-        "  string in the output — if it's missing, the check fails. This is\n"
-        "  the escape hatch for monitoring anything labwatch doesn't have a\n"
-        "  dedicated check for."
+        "Runs a shell command and checks the exit code. Non-zero means\n"
+        "  failure. Can also match expected output strings."
     ),
     "smart": (
-        "Monitors disk health using S.M.A.R.T. data from HDDs, SSDs, and\n"
-        "  NVMe drives via smartctl. On Raspberry Pi, reads SD/eMMC wear\n"
-        "  levels from sysfs. Alerts on failing health, high temperatures,\n"
-        "  excessive wear, or reallocated sectors."
+        "Monitors disk health via S.M.A.R.T. / smartctl. Alerts on\n"
+        "  failing health, high temps, or excessive wear."
     ),
     "system_update": (
-        "Automatically runs apt-get update && apt-get upgrade (or dist-upgrade)\n"
-        "  to keep your Debian/DietPi server fully patched. Optionally runs\n"
-        "  autoremove to clean up unused packages and can auto-reboot when\n"
-        "  a kernel update requires it."
+        "Runs apt-get upgrade automatically to keep your server patched.\n"
+        "  Supports autoremove and auto-reboot on kernel updates."
     ),
 }
 
@@ -165,9 +129,7 @@ def _module_selection_menu(config: dict) -> List[str]:
         desc = mod["short_desc"]
 
         # Determine current enabled state from config
-        if key == "autoupdate":
-            is_enabled = bool(config.get("update", {}).get("compose_dirs", []))
-        elif key == "system_update":
+        if key == "system_update":
             is_enabled = config.get("update", {}).get("system", {}).get("enabled", False)
         else:
             is_enabled = config.get("checks", {}).get(key, {}).get("enabled", mod["default_enabled"])
@@ -181,14 +143,8 @@ def _module_selection_menu(config: dict) -> List[str]:
     click.echo()
     click.secho("Module selection", bold=True)
     click.secho(
-        "  labwatch is made up of modules — each one monitors a different part of\n"
-        "  your homelab. Pick the ones that match your setup. You can always come\n"
-        "  back and change these later by running 'labwatch init' again.\n"
-        "\n"
-        "  Don't worry about configuration yet — just check the boxes for what you\n"
-        "  want to monitor. You'll set up the details for each one in the next steps.\n"
-        "\n"
-        "  Use arrow keys to move, space to toggle, enter to confirm.",
+        "  Each module monitors a different part of your homelab.\n"
+        "  Space to toggle, Enter to confirm.",
         dim=True,
     )
 
@@ -213,13 +169,7 @@ def _module_selection_fallback(config: dict) -> List[str]:
     click.echo()
     click.secho("Module selection", bold=True)
     click.secho(
-        "  labwatch is made up of modules — each one monitors a different part of\n"
-        "  your homelab. Pick the ones that match your setup. You can always come\n"
-        "  back and change these later by running 'labwatch init' again.\n"
-        "\n"
-        "  Don't worry about configuration yet — just check the boxes for what you\n"
-        "  want to monitor. You'll set up the details for each one in the next steps.\n"
-        "\n"
+        "  Each module monitors a different part of your homelab.\n"
         "  (questionary not available — falling back to per-module prompts.)",
         dim=True,
     )
@@ -228,9 +178,7 @@ def _module_selection_fallback(config: dict) -> List[str]:
         label = mod["label"]
         desc = mod["short_desc"]
 
-        if key == "autoupdate":
-            is_enabled = bool(config.get("update", {}).get("compose_dirs", []))
-        elif key == "system_update":
+        if key == "system_update":
             is_enabled = config.get("update", {}).get("system", {}).get("enabled", False)
         else:
             is_enabled = config.get("checks", {}).get(key, {}).get("enabled", mod["default_enabled"])
@@ -259,7 +207,6 @@ SECTION_ORDER: List[str] = [
     "network",
     "updates",
     "command",
-    "autoupdate",
     "system_update",
     "scheduling",
 ]
@@ -319,7 +266,7 @@ def _review_existing_list(
     for i, item in enumerate(items, 1):
         click.echo(f"    {i}. {format_item(item)}")
     r = click.prompt(
-        "  Enter to keep, 'n' to clear and reconfigure",
+        "  Keep these? [Y/n]",
         default="", show_default=False,
     )
     if r.strip().lower() == "n":
@@ -330,14 +277,10 @@ def _review_existing_list(
 def _prompt_yn(text: str, *, default: bool) -> bool:
     """Yes/no prompt where Enter accepts the default.
 
-    Shows '(Enter = yes, n to decline)' or '(Enter = no, y to confirm)'
-    so the user always knows what pressing Enter does.
+    Appends ``[Y/n]`` or ``[y/N]`` so the user always knows what Enter does.
     """
-    if default:
-        hint = "Enter = yes, 'n' to decline"
-    else:
-        hint = "Enter = no, 'y' to confirm"
-    r = click.prompt(f"{text}  ({hint})", default="", show_default=False)
+    suffix = "[Y/n]" if default else "[y/N]"
+    r = click.prompt(f"{text} {suffix}", default="", show_default=False)
     r = r.strip().lower()
     if not r:
         return default
@@ -347,11 +290,12 @@ def _prompt_yn(text: str, *, default: bool) -> bool:
 def _confirm_enable(label: str, current: bool) -> bool:
     """Prompt the user to enable/disable a module, showing current state.
 
-    Enter = keep current state.  Type 'y' or 'n' to change.
+    Uses ``[Y/n]`` when currently enabled (Enter keeps it on) or ``[y/N]``
+    when currently disabled (Enter keeps it off).
     """
-    state = "enabled" if current else "disabled"
+    suffix = "[Y/n]" if current else "[y/N]"
     r = click.prompt(
-        f"  {label}: {state}  (Enter to keep, y/n to change)",
+        f"  Enable {label}? {suffix}",
         default="", show_default=False,
     )
     r = r.strip().lower()
@@ -369,7 +313,7 @@ def _keep_current(label: str, summary_lines: list) -> bool:
     for line in summary_lines:
         click.echo(f"    {line}")
     r = click.prompt(
-        "  Enter to keep, 'n' to change",
+        "  Keep? [Y/n]",
         default="", show_default=False,
     )
     return r.strip().lower() != "n"
@@ -388,12 +332,7 @@ def _section_hostname(config: dict) -> None:
     click.echo()
     click.secho("Hostname", bold=True)
     click.secho(
-        "  Your hostname is a friendly name for this machine — like a nickname.\n"
-        "  It doesn't have to match your actual computer name. It just shows up\n"
-        "  in alerts and reports so you know which server is talking to you.\n"
-        "  If you run labwatch on multiple machines, pick something different\n"
-        "  for each one so you can tell them apart.\n"
-        "\n"
+        "  A friendly name for this machine, shown in alerts and reports.\n"
         "  Examples: 'proxmox-main', 'nas', 'pi-cluster', 'media-server'",
         dim=True,
     )
@@ -405,15 +344,8 @@ def _section_notifications(config: dict) -> None:
     click.echo()
     click.secho("Notification setup (ntfy)", bold=True)
     click.secho(
-        "  Without notifications, labwatch only shows results when you manually\n"
-        "  run 'labwatch check'. With notifications enabled, you get push alerts\n"
-        "  straight to your phone or desktop whenever something goes wrong —\n"
-        "  like a disk filling up, a container crashing, or a service going down.\n"
-        "\n"
-        "  ntfy (pronounced 'notify') is a free, open-source push notification\n"
-        "  service. You can use the public server at ntfy.sh (no account needed)\n"
-        "  or self-host your own. Install the ntfy app on your phone (Android or\n"
-        "  iOS) and subscribe to your topic to start receiving alerts instantly.",
+        "  Push alerts to your phone via ntfy when checks fail.\n"
+        "  Uses ntfy.sh (free, no account) or your own server.",
         dim=True,
     )
 
@@ -440,8 +372,7 @@ def _section_notifications(config: dict) -> None:
             return
 
         click.secho(
-            "  The server URL is where alerts are sent. Use https://ntfy.sh for\n"
-            "  the free public server, or your own URL if you self-host ntfy.",
+            "  Use https://ntfy.sh for the public server, or your own URL.",
             dim=True,
         )
         config["notifications"]["ntfy"]["server"] = click.prompt(
@@ -449,9 +380,7 @@ def _section_notifications(config: dict) -> None:
             default=existing_ntfy.get("server", "https://ntfy.sh"),
         )
         click.secho(
-            "  The topic is like a channel name. Anyone who subscribes to this\n"
-            "  topic will receive your alerts. Pick something unique to avoid\n"
-            "  collisions on the public server (e.g. 'myname-homelab-alerts').",
+            "  Pick a unique topic name (e.g. 'myname-homelab-alerts').",
             dim=True,
         )
         config["notifications"]["ntfy"]["topic"] = click.prompt(
@@ -553,6 +482,9 @@ def _section_docker(config: dict, *, from_menu: bool = False) -> None:
             "watch_stopped": existing.get("watch_stopped", True),
             "containers": existing.get("containers", []),
         }
+        # Deselecting docker also clears auto-update dirs
+        config.setdefault("update", {})
+        config["update"]["compose_dirs"] = []
         return
 
     existing_ws = existing.get("watch_stopped", True)
@@ -568,37 +500,56 @@ def _section_docker(config: dict, *, from_menu: bool = False) -> None:
             "watch_stopped": existing_ws,
             "containers": existing_containers,
         }
-        return
+    else:
+        click.secho(
+            "  Disable if you intentionally keep some containers stopped.",
+            dim=True,
+        )
+        watch_stopped = _prompt_yn(
+            "  Alert on stopped containers?",
+            default=existing_ws,
+        )
 
+        click.secho(
+            "  Leave empty to monitor all. Comma-separated to watch specific ones.",
+            dim=True,
+        )
+        containers_str = click.prompt(
+            "  Container names (comma-separated, empty = all)",
+            default=", ".join(existing_containers) if existing_containers else "",
+            show_default=False,
+        )
+        containers = [c.strip() for c in containers_str.split(",") if c.strip()] if containers_str.strip() else []
+
+        config["checks"]["docker"] = {
+            "enabled": True,
+            "watch_stopped": watch_stopped,
+            "containers": containers,
+        }
+
+    # --- Compose auto-updates sub-section ---
+    click.echo()
+    click.secho("  Compose auto-updates", bold=True)
     click.secho(
-        "  Alert on stopped/exited containers? If yes, labwatch flags any\n"
-        "  container that isn't 'running' as a warning or critical alert.\n"
-        "  Disable if you intentionally keep some containers stopped.",
+        "  Pulls latest images and restarts Compose services automatically.",
         dim=True,
     )
-    watch_stopped = _prompt_yn(
-        f"  Alert on stopped containers? [{'yes' if existing_ws else 'no'}]",
-        default=existing_ws,
+    existing_dirs = config.get("update", {}).get("compose_dirs", [])
+    config.setdefault("update", {})
+    config["update"].setdefault("compose_dirs", existing_dirs)
+
+    autoupdate_enabled = _prompt_yn(
+        "  Enable Compose auto-updates?",
+        default=bool(existing_dirs),
     )
 
-    click.secho(
-        "  Monitor specific containers only, or all of them?\n"
-        "  Leave empty to monitor everything. Or enter container names\n"
-        "  separated by commas to watch only those.",
-        dim=True,
-    )
-    containers_str = click.prompt(
-        "  Container names (comma-separated, empty = all)",
-        default=", ".join(existing_containers) if existing_containers else "",
-        show_default=False,
-    )
-    containers = [c.strip() for c in containers_str.split(",") if c.strip()] if containers_str.strip() else []
-
-    config["checks"]["docker"] = {
-        "enabled": True,
-        "watch_stopped": watch_stopped,
-        "containers": containers,
-    }
+    if autoupdate_enabled:
+        # Review existing dirs
+        kept = _review_existing_list(existing_dirs, "compose directories", lambda d: d)
+        config["update"]["compose_dirs"] = kept
+        _configure_auto_updates(config)
+    else:
+        config["update"]["compose_dirs"] = []
 
 
 def _section_http(config: dict, *, from_menu: bool = False) -> None:
@@ -705,9 +656,7 @@ def _section_nginx(config: dict, *, from_menu: bool = False) -> None:
             return
 
         click.secho(
-            "  If Nginx runs in Docker, enter the container name so labwatch\n"
-            "  can check it via the Docker API. Leave empty if Nginx is\n"
-            "  installed directly on the host (systemd/apt/yum).",
+            "  Enter Docker container name, or leave empty if Nginx is on the host.",
             dim=True,
         )
         container_default = existing_container or ""
@@ -718,14 +667,11 @@ def _section_nginx(config: dict, *, from_menu: bool = False) -> None:
         config["checks"]["nginx"]["container"] = container.strip()
 
         click.secho(
-            "  The config test runs 'nginx -t' to check for syntax errors.\n"
-            "  On the host (non-Docker) this requires root/sudo. If you don't\n"
-            "  have passwordless sudo set up, disable this to avoid repeated\n"
-            "  alerts. You can always run 'sudo nginx -t' manually instead.",
+            "  Requires root/sudo on the host. Disable if you lack passwordless sudo.",
             dim=True,
         )
         config_test = _prompt_yn(
-            f"  Enable nginx config test (nginx -t)? [{'yes' if existing_config_test else 'no'}]",
+            "  Enable nginx config test (nginx -t)?",
             default=existing_config_test,
         )
         config["checks"]["nginx"]["config_test"] = config_test
@@ -843,9 +789,7 @@ def _section_dns(config: dict, *, from_menu: bool = False) -> None:
 
     if dns_enabled:
         click.secho(
-            "  Enter domain names to resolve. labwatch will do a DNS lookup\n"
-            "  and alert if resolution fails — useful for catching DNS outages\n"
-            "  or misconfigurations (e.g. google.com, mydomain.com).",
+            "  e.g. google.com, mydomain.com",
             dim=True,
         )
         while True:
@@ -882,9 +826,7 @@ def _section_certs(config: dict, *, from_menu: bool = False) -> None:
 
     if certs_enabled:
         click.secho(
-            "  Enter domain names whose TLS certificates you want to monitor.\n"
-            "  labwatch connects on port 443 and checks the expiry date\n"
-            "  (e.g. mydomain.com, nextcloud.example.org).",
+            "  e.g. mydomain.com, nextcloud.example.org",
             dim=True,
         )
         while True:
@@ -944,9 +886,7 @@ def _section_ping(config: dict, *, from_menu: bool = False) -> None:
     if ping_enabled:
         _warn_missing_tool("ping")
         click.secho(
-            "  Enter IP addresses or hostnames to ping. Good for monitoring\n"
-            "  your router (192.168.1.1), a gateway, or a remote server.\n"
-            "  labwatch alerts if any host stops responding.",
+            "  e.g. 192.168.1.1, nas.local, 8.8.8.8",
             dim=True,
         )
         while True:
@@ -1007,7 +947,6 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
             return
 
         click.secho(
-            "  The local URL is how labwatch reaches HA on your network.\n"
             "  Usually http://localhost:8123 if HA runs on this machine.",
             dim=True,
         )
@@ -1016,8 +955,7 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
             default=existing_url,
         )
         click.secho(
-            "  If you access HA remotely (e.g. via Nabu Casa or your own\n"
-            "  domain), enter that URL to also verify external access works.",
+            "  Optional: Nabu Casa or custom domain URL for external access check.",
             dim=True,
         )
         ext_url = click.prompt(
@@ -1026,9 +964,7 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
         )
         config["checks"]["home_assistant"]["external_url"] = ext_url.strip()
         click.secho(
-            "  A long-lived access token lets labwatch call the HA API to\n"
-            "  check deeper health info. Generate one in HA under your\n"
-            "  Profile -> Security -> Long-Lived Access Tokens.",
+            "  Generate under Profile -> Security -> Long-Lived Access Tokens.",
             dim=True,
         )
         if existing_token:
@@ -1039,12 +975,11 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
         )
         config["checks"]["home_assistant"]["token"] = token.strip()
         click.secho(
-            "  If you use Google Home with HA, labwatch can verify that\n"
-            "  the Google Home Cloud API endpoint is reachable.",
+            "  Verifies the Google Home Cloud API endpoint is reachable.",
             dim=True,
         )
         config["checks"]["home_assistant"]["google_home"] = _prompt_yn(
-            f"  Check Google Home API connectivity? [{'yes' if existing_gh else 'no'}]",
+            "  Check Google Home API connectivity?",
             default=existing_gh,
         )
 
@@ -1121,9 +1056,7 @@ def _section_systemd(config: dict, *, from_menu: bool = False) -> None:
 
     # --- Manual additions ---
     click.secho(
-        "\n  You can also add units manually by name.\n"
-        "  Use the unit name as shown by 'systemctl list-units'\n"
-        "  (e.g. 'my-custom-app', 'wg-quick@wg0').",
+        "\n  Add units manually (e.g. 'my-custom-app', 'wg-quick@wg0').",
         dim=True,
     )
     while True:
@@ -1177,7 +1110,7 @@ def _systemd_checkbox_select(
         choices.append(questionary.Choice(
             title=f"{base} \u2014 {u['label']}",
             value=base,
-            checked=True,
+            checked=False,
         ))
 
     if known_active and other_active:
@@ -1229,7 +1162,7 @@ def _systemd_checkbox_fallback(
             base = u["unit"].replace(".service", "")
             click.echo(f"    {i}. {base} \u2014 {u['label']}")
 
-        if _prompt_yn("  Add all detected services?", default=True):
+        if _prompt_yn("  Add all detected services?", default=False):
             for u in known_active:
                 base = u["unit"].replace(".service", "")
                 already.add(base)
@@ -1237,7 +1170,7 @@ def _systemd_checkbox_fallback(
         elif _prompt_yn("  Pick individually?", default=True):
             for u in known_active:
                 base = u["unit"].replace(".service", "")
-                if _prompt_yn(f"    Monitor {base} ({u['label']})?", default=True):
+                if _prompt_yn(f"    Monitor {base} ({u['label']})?", default=False):
                     already.add(base)
                     config["checks"]["systemd"]["units"].append(base)
 
@@ -1326,9 +1259,7 @@ def _section_process(config: dict, *, from_menu: bool = False) -> None:
     if process_enabled:
         _warn_missing_tool("process")
         click.secho(
-            "  Enter process names as they appear in 'ps' or 'pgrep'.\n"
-            "  labwatch will alert if a process with that name isn't running\n"
-            "  (e.g. 'redis-server', 'mongod', 'node').",
+            "  e.g. 'redis-server', 'mongod', 'node'",
             dim=True,
         )
         while True:
@@ -1370,9 +1301,7 @@ def _section_network(config: dict, *, from_menu: bool = False) -> None:
     if network_enabled:
         _warn_missing_tool("network")
         click.secho(
-            "  Enter network interface names as shown by 'ip link' or 'ifconfig'.\n"
-            "  Useful for VPN tunnels (tun0, wg0), bridges, or secondary NICs.\n"
-            "  labwatch checks if the interface is UP and has an IP assigned.",
+            "  e.g. tun0, wg0, br0 — as shown by 'ip link'.",
             dim=True,
         )
         while True:
@@ -1426,9 +1355,7 @@ def _section_updates(config: dict, *, from_menu: bool = False) -> None:
             config["checks"]["updates"]["critical_threshold"] = ct
         else:
             click.secho(
-                "  Set how many pending updates trigger each severity level.\n"
-                "  For example: warn at 1+ pending, critical at 50+ pending.\n"
-                "  This uses your system package manager (apt, dnf, or yum).",
+                "  How many pending updates trigger each severity level.",
                 dim=True,
             )
             config["checks"]["updates"]["warning_threshold"] = click.prompt(
@@ -1469,9 +1396,7 @@ def _section_command(config: dict, *, from_menu: bool = False) -> None:
 
     if command_enabled:
         click.secho(
-            "  Define shell commands that labwatch runs on each check cycle.\n"
-            "  A non-zero exit code means failure. You can also require a\n"
-            "  specific string in the output to consider the check passing.",
+            "  Non-zero exit code = failure. Can also match expected output.",
             dim=True,
         )
         while _prompt_yn("  Add a command check?", default=not bool(kept)):
@@ -1493,12 +1418,15 @@ def _section_command(config: dict, *, from_menu: bool = False) -> None:
 
 
 def _section_autoupdate(config: dict, *, from_menu: bool = False) -> None:
+    """Backward-compat alias for ``labwatch init --only autoupdate``.
+
+    Auto-updates are now configured as a sub-section of Docker, but this
+    standalone entry point is kept so ``--only autoupdate`` still works.
+    """
     click.echo()
-    click.secho("Docker auto-updates", bold=True)
+    click.secho("Docker Compose auto-updates", bold=True)
     click.secho(
-        "  labwatch can automatically pull the latest Docker images and\n"
-        "  restart your Compose services. It runs 'docker compose pull'\n"
-        "  followed by 'docker compose up -d' in each configured directory.",
+        "  Pulls latest images and restarts Compose services automatically.",
         dim=True,
     )
 
@@ -1509,16 +1437,12 @@ def _section_autoupdate(config: dict, *, from_menu: bool = False) -> None:
     config.setdefault("update", {})
     config["update"]["compose_dirs"] = kept
 
-    if from_menu:
-        update_enabled = True
-    else:
-        update_enabled = _confirm_enable("Docker Compose auto-updates", bool(kept))
+    update_enabled = _confirm_enable("Docker Compose auto-updates", bool(kept))
 
     if update_enabled:
         _configure_auto_updates(config)
-    elif not from_menu:
-        # Not selected and not from menu — clear dirs
-        pass
+    else:
+        config["update"]["compose_dirs"] = []
 
 
 def _warn_if_sudo_needed() -> bool:
@@ -1612,9 +1536,7 @@ def _section_system_update(config: dict, *, from_menu: bool = False) -> None:
         return
 
     click.secho(
-        "  'safe' runs apt-get upgrade (never removes packages or installs\n"
-        "  new ones). 'full' runs apt-get dist-upgrade (may remove/install\n"
-        "  packages as needed for major upgrades).",
+        "  'safe' = apt-get upgrade. 'full' = apt-get dist-upgrade.",
         dim=True,
     )
     mode = click.prompt(
@@ -1625,7 +1547,7 @@ def _section_system_update(config: dict, *, from_menu: bool = False) -> None:
     config["update"]["system"]["mode"] = mode
 
     config["update"]["system"]["autoremove"] = _prompt_yn(
-        f"  Run autoremove after upgrade? [{'yes' if existing_autoremove else 'no'}]",
+        "  Run autoremove after upgrade?",
         default=existing_autoremove,
     )
 
@@ -1635,7 +1557,7 @@ def _section_system_update(config: dict, *, from_menu: bool = False) -> None:
         dim=True,
     )
     config["update"]["system"]["auto_reboot"] = _prompt_yn(
-        f"  Auto-reboot when required? [{'yes' if existing_auto_reboot else 'no'}]",
+        "  Auto-reboot when required?",
         default=existing_auto_reboot,
     )
 
@@ -1684,7 +1606,7 @@ MODULES.extend([
     {
         "key": "docker",
         "label": "Docker",
-        "short_desc": "container status monitoring",
+        "short_desc": "container monitoring & Compose auto-updates",
         "default_enabled": True,
         "wizard_fn": _section_docker,
         "config_path": "checks.docker",
@@ -1786,14 +1708,6 @@ MODULES.extend([
         "config_path": "checks.command",
     },
     {
-        "key": "autoupdate",
-        "label": "Docker auto-updates",
-        "short_desc": "pull & restart Compose services",
-        "default_enabled": False,
-        "wizard_fn": _section_autoupdate,
-        "config_path": "update.compose_dirs",
-    },
-    {
         "key": "system_update",
         "label": "System updates",
         "short_desc": "automated apt-get upgrade (Debian/DietPi)",
@@ -1818,7 +1732,7 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
         requested = [s.strip() for s in only.split(",") if s.strip()]
         invalid = [s for s in requested if s not in SECTION_FUNCTIONS]
         if invalid:
-            valid_list = ", ".join(SECTION_ORDER)
+            valid_list = ", ".join(sorted(SECTION_FUNCTIONS))
             click.secho(
                 f"Unknown section(s): {', '.join(invalid)}\n"
                 f"Valid sections: {valid_list}",
@@ -1856,11 +1770,9 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
     click.echo()
 
     if only is not None:
-        # --only mode: run only the named sections (old behavior)
+        # --only mode: run only the named sections
         sections_to_run = [s.strip() for s in only.split(",") if s.strip()]
-        for section_name in SECTION_ORDER:
-            if section_name not in sections_to_run:
-                continue
+        for section_name in sections_to_run:
             SECTION_FUNCTIONS[section_name](config)
 
         # Save
@@ -1897,12 +1809,15 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
     # 6. Disable unselected modules
     for key in all_module_keys:
         if key not in selected_modules:
-            if key == "autoupdate":
-                config.setdefault("update", {})
-                config["update"]["compose_dirs"] = []
-            elif key == "system_update":
+            if key == "system_update":
                 config.setdefault("update", {}).setdefault("system", {})
                 config["update"]["system"]["enabled"] = False
+            elif key == "docker":
+                config.setdefault("checks", {}).setdefault(key, {})
+                config["checks"][key]["enabled"] = False
+                # Deselecting docker also clears auto-update dirs
+                config.setdefault("update", {})
+                config["update"]["compose_dirs"] = []
             else:
                 config.setdefault("checks", {}).setdefault(key, {})
                 config["checks"][key]["enabled"] = False
@@ -2141,13 +2056,8 @@ def _offer_scheduling(config: dict) -> None:
     _section_break()
     click.secho("Scheduling", bold=True)
     click.echo(
-        "  labwatch is not a daemon — it runs once and exits.\n"
-        "  To monitor continuously, you need a cron job (or Task Scheduler\n"
-        "  on Windows) that calls 'labwatch check' on an interval.\n"
-        "\n"
-        "  Cron is a built-in Linux tool that runs commands automatically on\n"
-        "  a schedule — like a task scheduler. This lets labwatch check your\n"
-        "  server every few minutes without you having to remember."
+        "  labwatch runs once and exits. A cron job (or Task Scheduler on\n"
+        "  Windows) calls 'labwatch check' on an interval to monitor continuously."
     )
 
     # Offer notification test first — good to know it works before scheduling

@@ -40,9 +40,19 @@ class TestModulesList:
         keys = [m["key"] for m in MODULES]
         assert "smart" in keys
 
-    def test_autoupdate_in_modules(self):
+    def test_autoupdate_not_in_modules(self):
+        """autoupdate is consolidated into docker, no longer a separate module."""
         keys = [m["key"] for m in MODULES]
-        assert "autoupdate" in keys
+        assert "autoupdate" not in keys
+
+    def test_autoupdate_still_in_section_functions(self):
+        """autoupdate remains in SECTION_FUNCTIONS for --only backward compat."""
+        assert "autoupdate" in SECTION_FUNCTIONS
+
+    def test_docker_module_mentions_auto_updates(self):
+        """Docker module short_desc should mention auto-updates."""
+        docker_mod = next(m for m in MODULES if m["key"] == "docker")
+        assert "auto-update" in docker_mod["short_desc"]
 
     def test_module_keys_unique(self):
         keys = [m["key"] for m in MODULES]
@@ -250,6 +260,20 @@ class TestWizardOnlyFlag:
         with patch.dict("labwatch.wizard.SECTION_FUNCTIONS", {"smart": mock_fn}):
             result = runner.invoke(cli, [
                 "--config", str(cfg_path), "init", "--only", "smart",
+            ])
+        mock_fn.assert_called_once()
+        assert result.exit_code == 0
+
+    def test_only_autoupdate_backward_compat(self, tmp_path):
+        """--only autoupdate should still work even though it's not in MODULES."""
+        runner = CliRunner()
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(yaml.dump(copy.deepcopy(DEFAULT_CONFIG)))
+
+        mock_fn = MagicMock()
+        with patch.dict("labwatch.wizard.SECTION_FUNCTIONS", {"autoupdate": mock_fn}):
+            result = runner.invoke(cli, [
+                "--config", str(cfg_path), "init", "--only", "autoupdate",
             ])
         mock_fn.assert_called_once()
         assert result.exit_code == 0
