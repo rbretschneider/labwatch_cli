@@ -20,6 +20,7 @@ def full_cfg():
         "hostname": "test-server",
         "notifications": {
             "min_severity": "warning",
+            "heartbeat_url": "https://hc-ping.com/test-uuid",
             "ntfy": {
                 "enabled": True,
                 "server": "https://ntfy.example.com",

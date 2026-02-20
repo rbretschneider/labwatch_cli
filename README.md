@@ -20,6 +20,7 @@ Homelabs tend to grow into a sprawl of containers, services, and network configs
 - Config-driven. One YAML file defines everything to monitor.
 - Guided setup. The `labwatch init` wizard walks you through every option with detailed explanations, auto-detects Docker containers and systemd services, tests your notifications, and installs your cron schedule.
 - Smart notifications. Deduplicates repeated alerts and sends recovery notices when things come back.
+- Hardened for unattended use. File lock prevents overlapping runs, rotating log file provides forensic history, dead man's switch pings an external service so you know labwatch itself is still running.
 - Extensible. Plugin architecture for checks and notification backends.
 
 ## What It Monitors
@@ -245,6 +246,7 @@ hostname: "my-server"
 
 notifications:
   min_severity: "warning"     # only notify on warning or critical
+  heartbeat_url: ""           # dead man's switch — see "Heartbeat" section below
   ntfy:
     enabled: true
     server: "https://ntfy.sh"
@@ -485,6 +487,41 @@ Test your notifications at any time:
 labwatch notify "Test" "Hello from labwatch"
 ```
 
+## Heartbeat (Dead Man's Switch)
+
+labwatch can ping an external monitoring service after every check run. If the pings stop arriving, the external service alerts you — catching the case where labwatch itself breaks (cron deleted, Python env corrupted, permissions changed, etc.).
+
+This works with [Healthchecks.io](https://healthchecks.io) (free tier), [Uptime Kuma](https://github.com/louislam/uptime-kuma), or any service that accepts HTTP GET pings.
+
+```yaml
+notifications:
+  heartbeat_url: "https://hc-ping.com/your-uuid-here"
+```
+
+- Pinged after every `labwatch check` run
+- Appends `/fail` to the URL when checks have failures (Healthchecks.io convention)
+- 10-second timeout; never crashes monitoring if the ping fails
+- `labwatch doctor` verifies the URL is reachable
+
+## Unattended Cron Hardening
+
+When running from cron, labwatch includes three safety features that require no configuration:
+
+**File lock** — prevents overlapping runs. If a previous `labwatch check` is still running when cron fires again, the new instance exits silently. The lock auto-releases on crash. Lock file: `~/.config/labwatch/labwatch.lock`.
+
+**Rotating log** — every run logs to `~/.config/labwatch/labwatch.log`. Max 512KB per file with 1 backup = 1MB total on disk. Safe for Raspberry Pi SD cards.
+
+```
+2026-02-19 14:30:00 INFO check started
+2026-02-19 14:30:02 INFO check complete: 8 ok, 1 failed, worst=warning
+2026-02-19 14:30:02 INFO notifications sent for 1 failure(s)
+2026-02-19 14:30:03 INFO heartbeat pinged
+```
+
+**Dead man's switch** — see the Heartbeat section above.
+
+These features are active for `labwatch check`, `labwatch docker-update`, and `labwatch system-update`.
+
 ## Service Discovery
 
 ### Docker
@@ -516,9 +553,14 @@ It checks:
 - File permissions on the config (warns if too open)
 - Unexpanded `${VAR}` references (env vars not set)
 - ntfy server reachability
+- Heartbeat URL reachability (if configured)
 - Docker daemon accessibility
 - Required system tools (`systemctl`, `pgrep`, `ping`, `ip`) for enabled checks
+- Log directory is writable
 - Cron entries installed
+- Cron daemon is running
+- labwatch binary path in each cron entry still exists on disk
+- `sudo` NOPASSWD is configured for privileged cron entries (e.g. system-update)
 
 ## Shell Completion
 

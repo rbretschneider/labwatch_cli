@@ -295,3 +295,27 @@ class TestCertsValidation:
     def test_defaults_pass_validation(self):
         """Default certs config should pass validation."""
         assert validate_config(_cfg()) == []
+
+
+class TestHeartbeatValidation:
+    def test_empty_url_valid(self):
+        cfg = _cfg(**{"notifications.heartbeat_url": ""})
+        assert validate_config(cfg) == []
+
+    def test_https_url_valid(self):
+        cfg = _cfg(**{"notifications.heartbeat_url": "https://hc-ping.com/abc"})
+        assert validate_config(cfg) == []
+
+    def test_http_url_valid(self):
+        cfg = _cfg(**{"notifications.heartbeat_url": "http://healthcheck.local/ping"})
+        assert validate_config(cfg) == []
+
+    def test_ftp_url_rejected(self):
+        cfg = _cfg(**{"notifications.heartbeat_url": "ftp://example.com"})
+        errors = validate_config(cfg)
+        assert any("heartbeat_url" in e for e in errors)
+
+    def test_non_string_rejected(self):
+        cfg = _cfg(**{"notifications.heartbeat_url": 42})
+        errors = validate_config(cfg)
+        assert any("heartbeat_url" in e for e in errors)

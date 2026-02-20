@@ -16,6 +16,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "hostname": platform.node() or "homelab",
     "notifications": {
         "min_severity": "warning",
+        "heartbeat_url": "",
         "ntfy": {
             "enabled": True,
             "server": "https://ntfy.sh",
@@ -256,6 +257,15 @@ def validate_config(config: Dict[str, Any]) -> list:
     if min_sev not in ("ok", "warning", "critical"):
         errors.append(
             f"notifications.min_severity must be one of: ok, warning, critical — got '{min_sev}'"
+        )
+
+    # Validate heartbeat_url
+    hb_url = config.get("notifications", {}).get("heartbeat_url", "")
+    if not isinstance(hb_url, str):
+        errors.append("notifications.heartbeat_url must be a string")
+    elif hb_url and not (hb_url.startswith("http://") or hb_url.startswith("https://")):
+        errors.append(
+            "notifications.heartbeat_url must start with http:// or https://"
         )
 
     # Validate systemd units

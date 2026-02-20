@@ -1,6 +1,7 @@
 """Tests for new CLI features: exit codes, --quiet, --no-notify, --only validation,
 enable/disable, doctor, and completion."""
 
+import io
 import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -331,3 +332,147 @@ class TestVersionCommand:
         result = runner.invoke(cli, ["version"])
         assert result.exit_code == 0
         assert "labwatch" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Lock integration
+# ---------------------------------------------------------------------------
+
+class TestCheckLockIntegration:
+    @patch("labwatch.cli.load_config")
+    @patch("labwatch.lock.Lock.acquire", return_value=False)
+    def test_lock_held_exits_zero_no_output(self, mock_acquire, mock_cfg):
+        """When another instance holds the lock, check exits 0 with no table."""
+        mock_cfg.return_value = {"hostname": "test", "checks": {}}
+        runner = CliRunner()
+        result = runner.invoke(cli, ["check"])
+        assert result.exit_code == 0
+        assert "labwatch" not in result.output  # no Rich table
+
+    @patch("labwatch.cli.load_config")
+    @patch("labwatch.lock.Lock.acquire", return_value=False)
+    def test_docker_update_lock_held_exits_zero(self, mock_acquire, mock_cfg):
+        """docker-update should also exit 0 when locked."""
+        mock_cfg.return_value = {"hostname": "test", "update": {"compose_dirs": ["/opt"]}}
+        runner = CliRunner()
+        result = runner.invoke(cli, ["docker-update"])
+        assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat integration
+# ---------------------------------------------------------------------------
+
+class TestCheckHeartbeatIntegration:
+    @patch("labwatch.heartbeat.ping_heartbeat")
+    @patch("labwatch.cli.load_config")
+    @patch("labwatch.runner.Runner.run")
+    def test_heartbeat_called_after_check(self, mock_run, mock_cfg, mock_hb):
+        mock_cfg.return_value = {
+            "hostname": "test",
+            "checks": {},
+            "notifications": {"heartbeat_url": "https://hc-ping.com/abc"},
+        }
+        mock_run.return_value = _make_report("test", [
+            CheckResult(name="disk", severity=Severity.OK, message="fine"),
+        ])
+        runner = CliRunner()
+        result = runner.invoke(cli, ["check"])
+        assert result.exit_code == 0
+        mock_hb.assert_called_once()
+        # Verify has_failures=False was passed
+        assert mock_hb.call_args[0][1] is False or mock_hb.call_args[1].get("has_failures") is False
+
+
+# ---------------------------------------------------------------------------
+# Doctor cron verification
+# ---------------------------------------------------------------------------
+
+class TestVerifyCronEntries:
+    """Unit tests for _verify_cron_entries (called by doctor)."""
+
+    def _run(self, entries):
+        """Run _verify_cron_entries and return (oks, warns, fails, output)."""
+        from labwatch.cli import _verify_cron_entries
+
+        oks, warns, fails = [], [], []
+        console = Console(no_color=True, file=io.StringIO())
+
+        _verify_cron_entries(
+            entries, console,
+            _ok=lambda m: oks.append(m),
+            _warn=lambda m: warns.append(m),
+            _fail=lambda m: fails.append(m),
+        )
+        output = console.file.getvalue()
+        return oks, warns, fails, output
+
+    @patch("shutil.which", return_value="/usr/bin/systemctl")
+    @patch("subprocess.run")
+    def test_binary_exists(self, mock_run, mock_which, tmp_path):
+        """Entry pointing to a real binary should pass."""
+        fake_bin = tmp_path / "labwatch"
+        fake_bin.write_text("#!/bin/sh\n")
+
+        # Mock cron daemon check (active)
+        mock_run.return_value = MagicMock(stdout="active\n", returncode=0)
+
+        entry = f"*/5 * * * * {fake_bin} check # labwatch:check"
+        oks, warns, fails, _ = self._run([entry])
+        assert any("Binary exists" in m for m in oks)
+
+    @patch("shutil.which", return_value="/usr/bin/systemctl")
+    @patch("subprocess.run")
+    def test_binary_missing(self, mock_run, mock_which, tmp_path):
+        """Entry pointing to a nonexistent binary should fail."""
+        mock_run.return_value = MagicMock(stdout="active\n", returncode=0)
+
+        entry = f"*/5 * * * * {tmp_path}/no_such_labwatch check # labwatch:check"
+        oks, warns, fails, _ = self._run([entry])
+        assert any("Binary not found" in m for m in fails)
+
+    @patch("shutil.which", return_value="/usr/bin/systemctl")
+    @patch("subprocess.run")
+    def test_sudo_nopasswd_ok(self, mock_run, mock_which, tmp_path):
+        """sudo entry with working NOPASSWD should pass."""
+        fake_bin = tmp_path / "labwatch"
+        fake_bin.write_text("#!/bin/sh\n")
+
+        # First call: cron daemon check. Subsequent: sudo -n check.
+        mock_run.side_effect = [
+            MagicMock(stdout="active\n", returncode=0),  # systemctl is-active cron
+            MagicMock(stdout="", returncode=0),           # sudo -n labwatch --help
+        ]
+
+        entry = f"0 0 * * 0 sudo {fake_bin} system-update # labwatch:system-update"
+        oks, warns, fails, _ = self._run([entry])
+        assert any("sudo NOPASSWD works" in m for m in oks)
+
+    @patch("shutil.which", return_value="/usr/bin/systemctl")
+    @patch("subprocess.run")
+    def test_sudo_requires_password(self, mock_run, mock_which, tmp_path):
+        """sudo entry needing a password should fail."""
+        fake_bin = tmp_path / "labwatch"
+        fake_bin.write_text("#!/bin/sh\n")
+
+        mock_run.side_effect = [
+            MagicMock(stdout="active\n", returncode=0),  # systemctl is-active cron
+            MagicMock(stdout="", stderr="password required", returncode=1),  # sudo -n
+        ]
+
+        entry = f"0 0 * * 0 sudo {fake_bin} system-update # labwatch:system-update"
+        oks, warns, fails, _ = self._run([entry])
+        assert any("sudo requires a password" in m for m in fails)
+
+    @patch("shutil.which", return_value="/usr/bin/systemctl")
+    @patch("subprocess.run")
+    def test_cron_daemon_not_running(self, mock_run, mock_which):
+        """Should fail if cron daemon is not active."""
+        mock_run.side_effect = [
+            MagicMock(stdout="inactive\n", returncode=3),  # systemctl is-active cron
+            MagicMock(stdout="inactive\n", returncode=3),  # systemctl is-active crond
+        ]
+
+        entry = "*/5 * * * * /usr/bin/labwatch check # labwatch:check"
+        oks, warns, fails, _ = self._run([entry])
+        assert any("Cron daemon does not appear to be running" in m for m in fails)

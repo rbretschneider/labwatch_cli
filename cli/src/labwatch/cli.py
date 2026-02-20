@@ -109,41 +109,65 @@ def completion_cmd(shell):
 @click.pass_context
 def check_cmd(ctx, only, as_json, no_notify):
     """Run monitoring checks."""
+    import logging
+    from labwatch.heartbeat import ping_heartbeat
+    from labwatch.lock import Lock
+    from labwatch.logging_setup import setup_logging
     from labwatch.runner import Runner
 
-    console = _get_console(ctx)
-    cfg = _get_config(ctx)
-    quiet = ctx.obj.get("quiet", False)
+    logger = setup_logging()
+    lock = Lock()
+    if not lock.acquire():
+        logging.getLogger("labwatch").warning("check skipped: another instance is running")
+        return
 
-    modules = [m.strip() for m in only.split(",")] if only else None
-    _validate_modules(modules, ctx)
+    try:
+        console = _get_console(ctx)
+        cfg = _get_config(ctx)
+        quiet = ctx.obj.get("quiet", False)
 
-    runner = Runner(cfg, verbose=ctx.obj.get("verbose", False))
-    report = runner.run(modules)
+        modules = [m.strip() for m in only.split(",")] if only else None
+        _validate_modules(modules, ctx)
 
-    if as_json:
-        click.echo(json.dumps(report.to_dict(), indent=2))
-    elif not (quiet and not report.has_failures):
-        table = Table(title=f"labwatch \u2014 {report.hostname}")
-        table.add_column("Check", style="cyan")
-        table.add_column("Status")
-        table.add_column("Message")
+        logger.info("check started")
+        runner = Runner(cfg, verbose=ctx.obj.get("verbose", False))
+        report = runner.run(modules)
 
-        for result in report.results:
-            table.add_row(result.name, result.severity.icon, result.message)
+        if as_json:
+            click.echo(json.dumps(report.to_dict(), indent=2))
+        elif not (quiet and not report.has_failures):
+            table = Table(title=f"labwatch \u2014 {report.hostname}")
+            table.add_column("Check", style="cyan")
+            table.add_column("Status")
+            table.add_column("Message")
 
-        console.print(table)
+            for result in report.results:
+                table.add_row(result.name, result.severity.icon, result.message)
 
-    if report.has_failures and not no_notify:
-        runner.notify(report)
-        if ctx.obj.get("verbose"):
-            console.print("[dim]Notifications sent.[/dim]")
+            console.print(table)
 
-    # Exit code: 0 = OK, 1 = WARNING, 2 = CRITICAL
-    if report.worst_severity == Severity.CRITICAL:
-        raise SystemExit(2)
-    elif report.worst_severity == Severity.WARNING:
-        raise SystemExit(1)
+        if report.has_failures and not no_notify:
+            runner.notify(report)
+            if ctx.obj.get("verbose"):
+                console.print("[dim]Notifications sent.[/dim]")
+            logger.info("notifications sent for %d failure(s)",
+                        sum(1 for r in report.results
+                            if r.severity in (Severity.WARNING, Severity.CRITICAL)))
+
+        ok_count = sum(1 for r in report.results if r.severity == Severity.OK)
+        fail_count = len(report.results) - ok_count
+        logger.info("check complete: %d ok, %d failed, worst=%s",
+                     ok_count, fail_count, report.worst_severity.value)
+
+        ping_heartbeat(cfg, report.has_failures)
+
+        # Exit code: 0 = OK, 1 = WARNING, 2 = CRITICAL
+        if report.worst_severity == Severity.CRITICAL:
+            raise SystemExit(2)
+        elif report.worst_severity == Severity.WARNING:
+            raise SystemExit(1)
+    finally:
+        lock.release()
 
 
 @cli.command("notify")
@@ -245,57 +269,71 @@ def discover_cmd(ctx, show_systemd):
 @click.pass_context
 def docker_update_cmd(ctx, force, dry_run):
     """Pull latest images and restart Docker Compose services."""
+    import logging
+    from labwatch.lock import Lock
+    from labwatch.logging_setup import setup_logging
     from labwatch.updater import ComposeUpdater
 
-    console = _get_console(ctx)
-    cfg = _get_config(ctx)
+    logger = setup_logging()
+    lock = Lock()
+    if not lock.acquire():
+        logging.getLogger("labwatch").warning("docker-update skipped: another instance is running")
+        return
 
-    compose_dirs = cfg.get("update", {}).get("compose_dirs", [])
-    if not compose_dirs:
-        console.print(
-            "[red]No compose directories configured.[/red]\n"
-            "Add them to your config under update.compose_dirs, "
-            "or run [bold]labwatch init[/bold]."
-        )
-        raise SystemExit(1)
+    try:
+        console = _get_console(ctx)
+        cfg = _get_config(ctx)
 
-    if dry_run:
-        console.print("[dim]Dry run — no changes will be made.[/dim]")
+        compose_dirs = cfg.get("update", {}).get("compose_dirs", [])
+        if not compose_dirs:
+            console.print(
+                "[red]No compose directories configured.[/red]\n"
+                "Add them to your config under update.compose_dirs, "
+                "or run [bold]labwatch init[/bold]."
+            )
+            raise SystemExit(1)
 
-    updater = ComposeUpdater(cfg, force=force, dry_run=dry_run)
-    results = updater.run()
+        if dry_run:
+            console.print("[dim]Dry run — no changes will be made.[/dim]")
 
-    table = Table(title="Docker Compose Update")
-    table.add_column("Directory", style="cyan")
-    table.add_column("Pulled")
-    table.add_column("Updated")
-    table.add_column("Skipped")
-    table.add_column("Status")
+        updater = ComposeUpdater(cfg, force=force, dry_run=dry_run)
+        results = updater.run()
 
-    for r in results:
-        if r.error:
-            status = f"[red]{r.error}[/red]"
-        elif r.services_updated:
-            status = "[green]updated[/green]"
-        elif r.services_pulled:
-            status = "[dim]no changes[/dim]"
-        else:
-            status = "[dim]all skipped[/dim]"
+        table = Table(title="Docker Compose Update")
+        table.add_column("Directory", style="cyan")
+        table.add_column("Pulled")
+        table.add_column("Updated")
+        table.add_column("Skipped")
+        table.add_column("Status")
 
-        table.add_row(
-            r.directory,
-            ", ".join(r.services_pulled) or "-",
-            ", ".join(r.services_updated) or "-",
-            ", ".join(r.services_skipped) or "-",
-            status,
-        )
+        for r in results:
+            if r.error:
+                status = f"[red]{r.error}[/red]"
+            elif r.services_updated:
+                status = "[green]updated[/green]"
+            elif r.services_pulled:
+                status = "[dim]no changes[/dim]"
+            else:
+                status = "[dim]all skipped[/dim]"
 
-    console.print(table)
+            table.add_row(
+                r.directory,
+                ", ".join(r.services_pulled) or "-",
+                ", ".join(r.services_updated) or "-",
+                ", ".join(r.services_skipped) or "-",
+                status,
+            )
 
-    if not dry_run:
-        updater.notify(results)
-        if ctx.obj.get("verbose"):
-            console.print("[dim]Notifications sent.[/dim]")
+        console.print(table)
+
+        if not dry_run:
+            updater.notify(results)
+            if ctx.obj.get("verbose"):
+                console.print("[dim]Notifications sent.[/dim]")
+
+        logger.info("docker-update complete")
+    finally:
+        lock.release()
 
 
 @cli.command("system-update")
@@ -303,59 +341,74 @@ def docker_update_cmd(ctx, force, dry_run):
 @click.pass_context
 def system_update_cmd(ctx, dry_run):
     """Run apt-get upgrade on Debian/DietPi systems."""
+    import logging
+    from labwatch.lock import Lock
+    from labwatch.logging_setup import setup_logging
     from labwatch.system_updater import SystemUpdater
 
-    console = _get_console(ctx)
-    cfg = _get_config(ctx)
-
-    sys_cfg = cfg.get("update", {}).get("system", {})
-    if not sys_cfg.get("enabled"):
-        console.print(
-            "[red]System updates are not enabled.[/red]\n"
-            "Enable them in your config under update.system.enabled, "
-            "or run [bold]labwatch init[/bold]."
-        )
-        raise SystemExit(1)
-
-    if dry_run:
-        console.print("[dim]Dry run — no changes will be made.[/dim]")
-
-    updater = SystemUpdater(cfg, dry_run=dry_run)
-    result = updater.run()
-
-    if result.error:
-        console.print(f"[red]Error:[/red] {result.error}")
-        updater.notify(result)
-        raise SystemExit(1)
-
-    if result.dry_run:
-        if result.packages_upgraded:
-            console.print(f"[bold]{len(result.packages_upgraded)} package(s) upgradable:[/bold]")
-            for pkg in result.packages_upgraded:
-                console.print(f"  {pkg}")
-        else:
-            console.print("[green]System is up to date.[/green]")
+    logger = setup_logging()
+    lock = Lock()
+    if not lock.acquire():
+        logging.getLogger("labwatch").warning("system-update skipped: another instance is running")
         return
 
-    if result.packages_upgraded:
-        console.print(f"[green]\u2714[/green] {len(result.packages_upgraded)} package(s) upgraded")
-    else:
-        console.print("[green]\u2714[/green] System is up to date")
+    try:
+        console = _get_console(ctx)
+        cfg = _get_config(ctx)
 
-    if result.packages_removed:
-        console.print(f"  {len(result.packages_removed)} package(s) auto-removed")
+        sys_cfg = cfg.get("update", {}).get("system", {})
+        if not sys_cfg.get("enabled"):
+            console.print(
+                "[red]System updates are not enabled.[/red]\n"
+                "Enable them in your config under update.system.enabled, "
+                "or run [bold]labwatch init[/bold]."
+            )
+            raise SystemExit(1)
 
-    if result.rebooting:
-        console.print("[yellow]Reboot scheduled in 1 minute.[/yellow]")
-    elif result.reboot_required:
-        console.print("[yellow]Reboot required.[/yellow]")
+        if dry_run:
+            console.print("[dim]Dry run — no changes will be made.[/dim]")
 
-    updater.notify(result)
-    if ctx.obj.get("verbose"):
-        console.print("[dim]Notifications sent.[/dim]")
+        updater = SystemUpdater(cfg, dry_run=dry_run)
+        result = updater.run()
 
-    if result.rebooting:
-        updater.do_reboot()
+        if result.error:
+            console.print(f"[red]Error:[/red] {result.error}")
+            updater.notify(result)
+            raise SystemExit(1)
+
+        if result.dry_run:
+            if result.packages_upgraded:
+                console.print(f"[bold]{len(result.packages_upgraded)} package(s) upgradable:[/bold]")
+                for pkg in result.packages_upgraded:
+                    console.print(f"  {pkg}")
+            else:
+                console.print("[green]System is up to date.[/green]")
+            logger.info("system-update complete (dry-run)")
+            return
+
+        if result.packages_upgraded:
+            console.print(f"[green]\u2714[/green] {len(result.packages_upgraded)} package(s) upgraded")
+        else:
+            console.print("[green]\u2714[/green] System is up to date")
+
+        if result.packages_removed:
+            console.print(f"  {len(result.packages_removed)} package(s) auto-removed")
+
+        if result.rebooting:
+            console.print("[yellow]Reboot scheduled in 1 minute.[/yellow]")
+        elif result.reboot_required:
+            console.print("[yellow]Reboot required.[/yellow]")
+
+        updater.notify(result)
+        if ctx.obj.get("verbose"):
+            console.print("[dim]Notifications sent.[/dim]")
+
+        logger.info("system-update complete")
+
+        if result.rebooting:
+            updater.do_reboot()
+    finally:
+        lock.release()
 
 
 @cli.group("schedule")
@@ -986,6 +1039,116 @@ def update_cmd(ctx):
     console.print(f"[green]\u2714[/green] Updated: {current} \u2192 {latest}")
 
 
+def _verify_cron_entries(entries, console, _ok, _warn, _fail):
+    """Deep-verify that installed cron entries will actually execute.
+
+    Checks:
+    1. Cron daemon is running
+    2. labwatch binary path in each entry exists on disk
+    3. sudo entries have passwordless NOPASSWD configured
+    """
+    import shutil
+    from labwatch.scheduler import MARKER_PREFIX
+
+    # --- Cron daemon ---
+    cron_running = False
+    if shutil.which("systemctl"):
+        try:
+            proc = subprocess.run(
+                ["systemctl", "is-active", "cron"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if proc.stdout.strip() == "active":
+                cron_running = True
+            else:
+                # Some distros name it crond
+                proc2 = subprocess.run(
+                    ["systemctl", "is-active", "crond"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                cron_running = proc2.stdout.strip() == "active"
+        except Exception:
+            pass
+    if not cron_running and shutil.which("pgrep"):
+        try:
+            proc = subprocess.run(
+                ["pgrep", "-x", "cron"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if proc.returncode != 0:
+                proc = subprocess.run(
+                    ["pgrep", "-x", "crond"],
+                    capture_output=True, text=True, timeout=5,
+                )
+            cron_running = proc.returncode == 0
+        except Exception:
+            pass
+
+    if cron_running:
+        _ok("Cron daemon is running")
+    else:
+        _fail("Cron daemon does not appear to be running")
+        console.print("    Check with: [bold]systemctl status cron[/bold]")
+
+    # --- Per-entry checks ---
+    for entry in entries:
+        # Parse: strip the cron expression (first 5 fields) and marker
+        parts = entry.split()
+        # Cron expression is always 5 fields, then the command
+        cmd_parts = parts[5:]
+        # Remove the marker comment at the end
+        cmd_parts = [p for p in cmd_parts if not p.startswith(MARKER_PREFIX)]
+
+        uses_sudo = cmd_parts and cmd_parts[0] == "sudo"
+        if uses_sudo:
+            cmd_parts = cmd_parts[1:]
+
+        if not cmd_parts:
+            continue
+
+        # The binary is the first token (could be a path or "python -m labwatch")
+        binary = cmd_parts[0]
+
+        # Check binary exists
+        if os.path.isabs(binary):
+            if os.path.isfile(binary):
+                _ok(f"Binary exists: {binary}")
+            else:
+                _fail(f"Binary not found: {binary}")
+                console.print("    labwatch may have been reinstalled to a different path")
+                console.print(f"    Fix: [bold]labwatch schedule remove && labwatch schedule check --every 5m[/bold]")
+        else:
+            # Relative command like "python" — check it's findable
+            if shutil.which(binary):
+                _ok(f"Binary in PATH: {binary}")
+            else:
+                _warn(f"Binary not in PATH: {binary} — cron may not find it")
+
+        # Check sudo NOPASSWD
+        if uses_sudo:
+            # Build the actual command that cron would run (without cron expr)
+            # e.g. "sudo /usr/bin/labwatch system-update"
+            sudo_cmd = " ".join(cmd_parts)
+            try:
+                proc = subprocess.run(
+                    ["sudo", "-n", binary, "--help"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if proc.returncode == 0:
+                    _ok(f"sudo NOPASSWD works for: {binary}")
+                else:
+                    _fail(f"sudo requires a password for: {binary}")
+                    console.print("    Cron cannot enter passwords — the job will hang/fail")
+                    console.print("    Fix: [bold]sudo visudo -f /etc/sudoers.d/labwatch[/bold]")
+                    import getpass
+                    user = getpass.getuser()
+                    console.print(f"    Add:  [bold]{user} ALL=(root) NOPASSWD: {binary} system-update[/bold]")
+            except FileNotFoundError:
+                _warn("sudo command not found — cannot verify NOPASSWD")
+            except Exception:
+                _warn(f"Could not test sudo for: {binary}")
+
+
 @cli.command("doctor")
 @click.pass_context
 def doctor_cmd(ctx):
@@ -1110,6 +1273,21 @@ def doctor_cmd(ctx):
     else:
         _warn("No notification backend enabled")
 
+    # --- Heartbeat ---
+    hb_url = cfg.get("notifications", {}).get("heartbeat_url", "")
+    if hb_url:
+        console.print()
+        console.print("[bold]Heartbeat[/bold]")
+        try:
+            import requests as _requests
+            resp = _requests.get(hb_url, timeout=5)
+            if resp.status_code < 500:
+                _ok(f"Heartbeat URL reachable ({resp.status_code})")
+            else:
+                _warn(f"Heartbeat URL returned {resp.status_code}")
+        except Exception as e:
+            _fail(f"Cannot reach heartbeat URL: {e}")
+
     console.print()
 
     # --- Docker ---
@@ -1156,6 +1334,20 @@ def doctor_cmd(ctx):
 
     console.print()
 
+    # --- Logging ---
+    console.print("[bold]Logging[/bold]")
+    from labwatch.logging_setup import _log_path
+    log_dir = _log_path().parent
+    if log_dir.exists():
+        if os.access(str(log_dir), os.W_OK):
+            _ok(f"Log directory writable: {log_dir}")
+        else:
+            _fail(f"Log directory not writable: {log_dir}")
+    else:
+        _warn(f"Log directory does not exist yet: {log_dir} (will be created on first run)")
+
+    console.print()
+
     # --- Cron ---
     console.print("[bold]Schedule[/bold]")
     if sys.platform == "win32":
@@ -1171,6 +1363,10 @@ def doctor_cmd(ctx):
             else:
                 _warn("No labwatch cron entries found — checks won't run automatically")
                 console.print("    Run [bold]labwatch init[/bold] or [bold]labwatch schedule check --every 5m[/bold]")
+
+            # --- Verify cron entries will actually work ---
+            if entries:
+                _verify_cron_entries(entries, console, _ok, _warn, _fail)
         except Exception as e:
             _warn(f"Could not read crontab: {e}")
 
