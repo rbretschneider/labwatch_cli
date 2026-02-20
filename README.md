@@ -51,25 +51,38 @@ Requires **Python 3.8+**.
 [pipx](https://pipx.pypa.io/) installs CLI tools in their own virtual environment so they don't pollute your system Python. It's the cleanest way to install labwatch.
 
 ```bash
-# Install pipx if you don't have it
-pip install pipx
-pipx ensurepath
+# Debian 12+ / DietPi / Raspberry Pi OS (Bookworm)
+sudo apt install pipx
+pipx ensurepath   # adds ~/.local/bin to your PATH
+source ~/.bashrc  # or open a new shell
 
 # Install labwatch
 pipx install labwatch
 ```
 
-### Alternative: pip
+> **Older systems** (Debian 11, Ubuntu 22.04 and earlier) where `apt install pipx` isn't available:
+> ```bash
+> pip install pipx
+> pipx ensurepath
+> ```
+
+### Alternative: pip with virtual environment
+
+Modern Debian-based systems (Bookworm+) block `pip install` outside a venv ([PEP 668](https://peps.python.org/pep-0668/)). If you prefer pip over pipx:
 
 ```bash
-pip install labwatch
+python3 -m venv ~/.local/share/labwatch-venv
+~/.local/share/labwatch-venv/bin/pip install labwatch
+
+# Symlink into PATH so you can just type "labwatch"
+ln -s ~/.local/share/labwatch-venv/bin/labwatch ~/.local/bin/labwatch
 ```
 
-> **PATH note (DietPi / Raspberry Pi / Debian):** When you install as a non-root user, pip puts the `labwatch` binary in `~/.local/bin/`. Debian-based systems don't always add this to your PATH. If `labwatch` is "command not found" after install, add this line to `~/.bashrc` and open a new shell:
+> **PATH note (DietPi / Raspberry Pi / Debian):** `~/.local/bin` may not be in your PATH by default. If `labwatch` is "command not found" after install, add this line to `~/.bashrc` and open a new shell:
 > ```bash
 > export PATH="$HOME/.local/bin:$PATH"
 > ```
-> This is not needed with pipx (which runs `ensurepath` for you) or if you install as root with `sudo pip install labwatch`.
+> This is not needed with pipx (which runs `ensurepath` for you).
 
 ### Updating
 
@@ -79,8 +92,8 @@ labwatch update
 
 # Or manually via pipx / pip
 pipx upgrade labwatch
-# or
-pip install --upgrade labwatch
+# or (if installed in a venv)
+~/.local/share/labwatch-venv/bin/pip install --upgrade labwatch
 ```
 
 ### Development install
