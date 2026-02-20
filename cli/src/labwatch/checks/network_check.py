@@ -76,7 +76,10 @@ class NetworkCheck(BaseCheck):
                     severity=fail_sev,
                     message=f"Interface '{iface}' not found",
                 )
-            if "state UP" in result.stdout:
+            # Virtual/tunnel interfaces (tun0, wg0, etc.) report
+            # "state UNKNOWN" because they lack physical carrier
+            # detection — treat UNKNOWN the same as UP.
+            if "state UP" in result.stdout or "state UNKNOWN" in result.stdout:
                 return CheckResult(
                     name=f"network:{iface}:link",
                     severity=Severity.OK,

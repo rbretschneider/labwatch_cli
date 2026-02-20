@@ -24,6 +24,10 @@ IP_LINK_UP = """\
 3: tun0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP mode DEFAULT group default qlen 500
     link/none"""
 
+IP_LINK_UNKNOWN = """\
+3: tun0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UNKNOWN mode DEFAULT group default qlen 500
+    link/none"""
+
 IP_LINK_DOWN = """\
 3: tun0: <POINTOPOINT,MULTICAST,NOARP> mtu 1500 qdisc fq_codel state DOWN mode DEFAULT group default qlen 500
     link/none"""
@@ -81,6 +85,37 @@ class TestInterfaceUp:
         tx = next(r for r in results if r.name == "network:tun0:tx")
         assert tx.severity == Severity.OK
         assert "12345" in tx.message
+
+
+class TestInterfaceStateUnknown:
+    """Virtual/tunnel ifaces report state UNKNOWN — should count as UP."""
+
+    def _run_unknown(self, cmd, **kwargs):
+        completed = MagicMock(spec=subprocess.CompletedProcess)
+        completed.returncode = 0
+        if cmd[:2] == ["ip", "link"] and len(cmd) == 2:
+            completed.stdout = ""
+            return completed
+        if cmd[:3] == ["ip", "link", "show"]:
+            iface = cmd[3]
+            completed.stdout = IP_LINK_UNKNOWN.replace("tun0", iface)
+            return completed
+        if cmd[:4] == ["ip", "-4", "addr", "show"]:
+            completed.stdout = IP_ADDR_WITH_IP
+            return completed
+        completed.stdout = ""
+        return completed
+
+    @patch("builtins.open", mock_open(read_data="5678\n"))
+    @patch("labwatch.checks.network_check.subprocess.run")
+    def test_unknown_treated_as_up(self, mock_run):
+        mock_run.side_effect = self._run_unknown
+        check = NetworkCheck(_cfg([{"name": "tun0"}]))
+        results = check.run()
+
+        link = next(r for r in results if r.name == "network:tun0:link")
+        assert link.severity == Severity.OK
+        assert link.message == "UP"
 
 
 class TestInterfaceDown:

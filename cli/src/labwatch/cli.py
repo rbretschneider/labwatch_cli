@@ -1217,8 +1217,10 @@ def doctor_cmd(ctx):
                     except OSError:
                         pass
                 if not found_in_profile:
-                    _warn(f"labwatch is in {bin_dir} which may not be in PATH for new shells")
-                    console.print(f"    Add to ~/.bashrc:  [bold]export PATH=\"{bin_dir}:$PATH\"[/bold]")
+                    _warn(f"labwatch is in {bin_dir} which is not in your shell startup files")
+                    console.print(f"    Without this, new terminal windows and cron jobs may not find labwatch.")
+                    console.print(f"    Fix: run this command once, then open a new terminal:")
+                    console.print(f"      [bold]echo 'export PATH=\"{bin_dir}:$PATH\"' >> ~/.bashrc[/bold]")
                 else:
                     _ok(f"labwatch binary: {lw_bin}")
             else:
