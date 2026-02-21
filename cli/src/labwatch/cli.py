@@ -465,12 +465,25 @@ def schedule_system_update(ctx, every):
     from labwatch import scheduler
 
     console = _get_console(ctx)
+
+    needs_sudo = sys.platform != "win32" and os.geteuid() != 0
+
     try:
-        line = scheduler.add_entry("system-update", every)
+        line = scheduler.add_entry("system-update", every, use_sudo=needs_sudo)
         console.print(f"[green]\u2714[/green] Scheduled: {line}")
     except (ValueError, RuntimeError) as e:
         console.print(f"[red]{e}[/red]")
         raise SystemExit(1)
+
+    if needs_sudo:
+        import getpass
+        from labwatch.scheduler import resolve_labwatch_path
+        username = getpass.getuser()
+        labwatch_path = resolve_labwatch_path()
+        console.print()
+        console.print("[yellow]Note:[/yellow] This entry uses sudo. Ensure passwordless sudo is configured:")
+        console.print(f"  [bold]sudo visudo -f /etc/sudoers.d/labwatch[/bold]")
+        console.print(f"  Add: [bold]{username} ALL=(root) NOPASSWD: {labwatch_path} system-update[/bold]")
 
 
 @schedule_group.command("update")
@@ -1133,6 +1146,16 @@ def _verify_cron_entries(entries, console, _ok, _warn, _fail):
         if uses_sudo:
             # cmd_parts is e.g. ["/path/labwatch", "system-update"]
             sudo_entries.append(tuple(cmd_parts))
+
+        # Warn if system-update entry is missing sudo for non-root user
+        if not uses_sudo and sys.platform != "win32" and "system-update" in cmd_parts:
+            try:
+                if os.geteuid() != 0:
+                    _warn("system-update entry missing sudo \u2014 will fail as non-root")
+                    console.print("    Fix: [bold]labwatch schedule remove system-update && "
+                                  "labwatch schedule system-update --every 1d[/bold]")
+            except AttributeError:
+                pass  # Windows — no geteuid
 
     # Check sudo NOPASSWD (once per unique command)
     seen_sudo = set()

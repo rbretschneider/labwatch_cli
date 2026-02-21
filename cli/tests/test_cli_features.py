@@ -523,3 +523,18 @@ class TestVerifyCronEntries:
         oks, warns, fails, _ = self._run(entries)
         binary_oks = [m for m in oks if "Binary exists" in m]
         assert len(binary_oks) == 1  # reported once, not three times
+
+    @patch("os.geteuid", create=True, return_value=1000)
+    @patch("sys.platform", "linux")
+    @patch("shutil.which", return_value="/usr/bin/systemctl")
+    @patch("subprocess.run")
+    def test_system_update_missing_sudo_warns(self, mock_run, mock_which, mock_euid, tmp_path):
+        """system-update without sudo should warn when non-root."""
+        fake_bin = tmp_path / "labwatch"
+        fake_bin.write_text("#!/bin/sh\n")
+        mock_run.return_value = MagicMock(stdout="active\n", returncode=0)
+
+        entry = f"0 0 * * * {fake_bin} system-update # labwatch:system-update"
+        oks, warns, fails, output = self._run([entry])
+        assert any("missing sudo" in m for m in warns)
+        assert "schedule remove system-update" in output
