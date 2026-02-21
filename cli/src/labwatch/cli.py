@@ -1152,7 +1152,7 @@ def _verify_cron_entries(entries, console, _ok, _warn, _fail):
             try:
                 if os.geteuid() != 0:
                     _warn("system-update entry missing sudo \u2014 will fail as non-root")
-                    console.print("    Fix: [bold]labwatch schedule remove system-update && "
+                    console.print("    Fix: [bold]labwatch schedule remove --only system-update && "
                                   "labwatch schedule system-update --every 1d[/bold]")
             except AttributeError:
                 pass  # Windows — no geteuid

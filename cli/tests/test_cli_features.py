@@ -537,4 +537,4 @@ class TestVerifyCronEntries:
         entry = f"0 0 * * * {fake_bin} system-update # labwatch:system-update"
         oks, warns, fails, output = self._run([entry])
         assert any("missing sudo" in m for m in warns)
-        assert "schedule remove system-update" in output
+        assert "schedule remove --only system-update" in output
