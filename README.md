@@ -40,6 +40,7 @@ Homelabs tend to grow into a sprawl of containers, services, and network configs
 | **home_assistant** | HA `/api/` health, optional external URL check, optional Google Home cloud API, authenticated checks with long-lived token. |
 | **updates** | Counts pending package updates (apt/dnf/yum). Warn at N+ pending, critical at M+. |
 | **smart** | S.M.A.R.T. disk health for HDDs, SSDs, and NVMe via smartctl. Raspberry Pi SD/eMMC wear via sysfs. Alerts on failing health, high temps, excessive wear, reallocated sectors. |
+| **mounts** | Verifies expected filesystem mounts (NFS, CIFS, FUSE, bind) are present and accessible. Catches stale NFS mounts via subprocess timeout. Optional write-access check. |
 | **command** | Run any shell command. Exit 0 = OK, non-zero = failure. Optional output string matching. |
 
 ## Install
@@ -358,6 +359,15 @@ checks:
     wear_warning: 80
     wear_critical: 90
     devices: []              # empty = auto-detect all drives
+
+  mounts:
+    enabled: false
+    mounts:
+      - path: "/mnt/nas"
+        severity: "critical"
+      - path: "/mnt/backup"
+        severity: "warning"
+        writable: true          # also check write access
 
   command:
     enabled: false

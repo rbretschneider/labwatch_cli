@@ -74,6 +74,10 @@ CHECK_DESCRIPTIONS = {
         "Monitors disk health via S.M.A.R.T. / smartctl. Alerts on\n"
         "  failing health, high temps, or excessive wear."
     ),
+    "mounts": (
+        "Verifies expected filesystem mounts (NFS, CIFS, FUSE, bind)\n"
+        "  are present and accessible. Catches stale NFS hangs."
+    ),
     "system_update": (
         "Installs available package updates automatically (apt-get\n"
         "  upgrade). Supports autoremove and auto-reboot on kernel\n"
@@ -207,6 +211,7 @@ SECTION_ORDER: List[str] = [
     "systemd",
     "process",
     "network",
+    "mounts",
     "updates",
     "command",
     "system_update",
@@ -1337,6 +1342,64 @@ def _section_network(config: dict, *, from_menu: bool = False) -> None:
             )
 
 
+def _section_mounts(config: dict, *, from_menu: bool = False) -> None:
+    click.echo()
+    click.secho("Filesystem mount monitoring", bold=True)
+    _print_description("mounts")
+
+    existing = config.get("checks", {}).get("mounts", {})
+    if from_menu:
+        mounts_enabled = True
+    else:
+        mounts_enabled = _confirm_enable(
+            "filesystem mount monitoring",
+            existing.get("enabled", False),
+        )
+
+    config.setdefault("checks", {})
+    config["checks"].setdefault("mounts", {})
+    config["checks"]["mounts"]["enabled"] = mounts_enabled
+
+    existing_mounts = existing.get("mounts", [])
+    kept = _review_existing_list(
+        existing_mounts,
+        "mount points",
+        lambda m: f"{m.get('path', '?')} ({m.get('severity', 'critical')}"
+                  f"{', writable' if m.get('writable') else ''})",
+    )
+    config["checks"]["mounts"]["mounts"] = kept
+
+    if mounts_enabled:
+        click.secho(
+            "  e.g. /mnt/nas, /mnt/backup, /media/usb",
+            dim=True,
+        )
+        while True:
+            path = click.prompt(
+                "  Mount path (empty to finish)",
+                default="", show_default=False,
+            )
+            if not path.strip():
+                break
+            click.secho(
+                f"  How severe is it if '{path.strip()}' is missing?",
+                dim=True,
+            )
+            sev = click.prompt(
+                f"  Severity for '{path.strip()}'",
+                type=click.Choice(["critical", "warning"]),
+                default="critical",
+            )
+            writable = _prompt_yn(
+                f"  Check write access to '{path.strip()}'?",
+                default=False,
+            )
+            entry: Dict[str, Any] = {"path": path.strip(), "severity": sev}
+            if writable:
+                entry["writable"] = True
+            config["checks"]["mounts"]["mounts"].append(entry)
+
+
 def _section_updates(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Pending package updates (alert only)", bold=True)
@@ -1594,6 +1657,7 @@ SECTION_FUNCTIONS: Dict[str, Callable] = {
     "systemd": _section_systemd,
     "process": _section_process,
     "network": _section_network,
+    "mounts": _section_mounts,
     "updates": _section_updates,
     "command": _section_command,
     "autoupdate": _section_autoupdate,
@@ -1710,6 +1774,14 @@ MODULES.extend([
         "default_enabled": False,
         "wizard_fn": _section_updates,
         "config_path": "checks.updates",
+    },
+    {
+        "key": "mounts",
+        "label": "Filesystem mounts",
+        "short_desc": "NFS, CIFS, FUSE, bind mount checks",
+        "default_enabled": False,
+        "wizard_fn": _section_mounts,
+        "config_path": "checks.mounts",
     },
     {
         "key": "command",
@@ -1947,7 +2019,7 @@ def _print_summary(config: dict, config_path: Path) -> None:
     checks = config.get("checks", {})
     all_check_names = [
         "system", "docker", "http", "nginx", "smart", "dns", "certs", "ping",
-        "home_assistant", "systemd", "process", "network", "updates", "command",
+        "home_assistant", "systemd", "process", "network", "mounts", "updates", "command",
     ]
     enabled = [n for n in all_check_names if checks.get(n, {}).get("enabled")]
     disabled = [n for n in all_check_names if not checks.get(n, {}).get("enabled")]
@@ -2031,7 +2103,7 @@ SCHEDULE_TIERS: List[Tuple[str, str, List[str], List[Tuple[str, str]]]] = [
         ("30m", "Every 30 minutes"),
         ("1h", "Hourly"),
     ]),
-    ("30m", "every 30 min", ["system", "docker", "home_assistant", "systemd", "process", "command", "smart"], [
+    ("30m", "every 30 min", ["system", "docker", "home_assistant", "systemd", "process", "command", "smart", "mounts"], [
         ("30m", "Every 30 minutes (recommended)"),
         ("1h", "Hourly"),
         ("4h", "Every 4 hours"),

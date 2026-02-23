@@ -101,6 +101,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "wear_critical": 90,
             "devices": [],
         },
+        "mounts": {
+            "enabled": False,
+            "mounts": [],
+        },
     },
     "update": {
         "compose_dirs": [],
@@ -312,6 +316,17 @@ def validate_config(config: Dict[str, Any]) -> list:
         if sev not in ("warning", "critical"):
             errors.append(
                 f"network.interfaces[{i}].severity must be 'warning' or 'critical'"
+            )
+
+    # Validate mounts entries
+    for i, mount in enumerate(checks.get("mounts", {}).get("mounts", [])):
+        if not isinstance(mount, dict) or not mount.get("path"):
+            errors.append(f"mounts.mounts[{i}] must be a dict with non-empty 'path'")
+            continue
+        sev = mount.get("severity", "critical")
+        if sev not in ("warning", "critical"):
+            errors.append(
+                f"mounts.mounts[{i}].severity must be 'warning' or 'critical'"
             )
 
     # Validate updates thresholds
