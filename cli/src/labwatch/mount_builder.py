@@ -493,7 +493,7 @@ def run_mount_builder(
             seen_servers.add(sname)
             console.print(f"  Credentials for {sname}:")
             user = click.prompt("    Username")
-            pw = click.prompt("    Password", hide_input=True)
+            pw = click.prompt("    Password", hide_input=True, default="", show_default=False)
             credentials[sname] = (user, pw)
 
     # --- Docker override ---
