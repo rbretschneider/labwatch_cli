@@ -1478,6 +1478,24 @@ def doctor_cmd(ctx):
             _warn(f"Could not read crontab: {e}")
 
     console.print()
+
+    # --- Timezone ---
+    if sys.platform == "linux":
+        console.print("[bold]Timezone[/bold]")
+        from labwatch.wizard import _get_system_timezone
+        tz = _get_system_timezone()
+        if tz:
+            import datetime as _dt
+            now = _dt.datetime.now()
+            _ok(f"Timezone: {tz} (local time: {now.strftime('%H:%M')})")
+            if tz in ("Etc/UTC", "UTC", "Etc/GMT"):
+                _warn("System timezone is UTC — cron 'daily' jobs run at midnight UTC, not local midnight")
+                console.print("    If this isn't intentional, fix with:")
+                console.print("    [bold]sudo timedatectl set-timezone America/New_York[/bold]")
+        else:
+            _warn("Could not detect system timezone")
+        console.print()
+
     console.print(f"  {ok_count} passed, {warn_count} warnings, {fail_count} errors")
 
     if fail_count:

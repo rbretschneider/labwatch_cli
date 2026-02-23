@@ -1,8 +1,10 @@
 """Interactive setup wizard for labwatch."""
 
+import datetime
 import os
 import platform
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -2133,6 +2135,73 @@ _SYSTEM_UPDATE_CHOICES: List[Tuple[str, str]] = [
 ]
 
 
+def _get_system_timezone() -> Optional[str]:
+    """Return the system timezone name, or None if unknown."""
+    # Method 1: /etc/timezone (Debian/Ubuntu/DietPi)
+    try:
+        tz = Path("/etc/timezone").read_text().strip()
+        if tz:
+            return tz
+    except OSError:
+        pass
+
+    # Method 2: timedatectl (systemd)
+    try:
+        proc = subprocess.run(
+            ["timedatectl", "show", "--property=Timezone", "--value"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Method 3: TZ environment variable
+    return os.environ.get("TZ")
+
+
+def _check_timezone() -> None:
+    """Show the system timezone and offer to change it if it looks wrong."""
+    if sys.platform != "linux":
+        return
+
+    tz = _get_system_timezone()
+    if not tz:
+        return
+
+    now = datetime.datetime.now()
+    click.echo()
+    click.secho(f"  System timezone: {tz}", bold=True)
+    click.secho(f"  Current local time: {now.strftime('%H:%M (%A)')}", dim=True)
+    click.secho(
+        "  Cron jobs use this timezone. Daily jobs run at midnight local time.",
+        dim=True,
+    )
+
+    if _prompt_yn("  Is this correct?", default=True):
+        return
+
+    # Offer to change
+    click.echo()
+    click.secho("  Enter your timezone (e.g. America/New_York, Europe/London).", dim=True)
+    click.secho("  Run 'timedatectl list-timezones' to see all options.", dim=True)
+    new_tz = click.prompt("  Timezone")
+    try:
+        subprocess.run(
+            ["sudo", "timedatectl", "set-timezone", new_tz],
+            check=True, capture_output=True, text=True,
+        )
+        click.secho(f"  \u2714 Timezone set to {new_tz}", fg="green")
+        now = datetime.datetime.now()
+        click.secho(f"  Local time is now: {now.strftime('%H:%M (%A)')}", dim=True)
+    except subprocess.CalledProcessError as e:
+        click.secho(f"  \u2718 Failed to set timezone: {e.stderr.strip()}", fg="red")
+        click.echo(f"  Fix manually: sudo timedatectl set-timezone {new_tz}")
+    except FileNotFoundError:
+        click.secho("  \u2718 timedatectl not found.", fg="red")
+        click.echo(f"  Fix manually: sudo ln -sf /usr/share/zoneinfo/{new_tz} /etc/localtime")
+
+
 def _offer_scheduling(config: dict) -> None:
     """Explain the execution model and offer to install cron entries."""
     # Save config before scheduling (so cron jobs use up-to-date config)
@@ -2149,6 +2218,9 @@ def _offer_scheduling(config: dict) -> None:
         "  labwatch runs once and exits. A cron job (or Task Scheduler on\n"
         "  Windows) calls 'labwatch check' on an interval to monitor continuously."
     )
+
+    # Check timezone before showing schedule — cron uses system timezone
+    _check_timezone()
 
     # Offer notification test first — good to know it works before scheduling
     _offer_notification_test(config)
