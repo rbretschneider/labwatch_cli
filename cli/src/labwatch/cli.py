@@ -615,6 +615,7 @@ _MODULE_DISPLAY = [
     ("process", "Processes"),
     ("updates", "Package Updates"),
     ("command", "Custom Commands"),
+    ("mounts", "Filesystem Mounts"),
 ]
 
 
@@ -663,6 +664,7 @@ def _build_config_tree(cfg: dict) -> Tree:
             "process": _tree_process,
             "updates": _tree_updates,
             "command": _tree_command,
+            "mounts": _tree_mounts,
         }
         for key, label in enabled_modules:
             mod_branch = mon_branch.add(f"[cyan]{label}[/cyan]")
@@ -850,6 +852,21 @@ def _tree_command(branch, cfg):
         branch.add("[dim](no commands configured)[/dim]")
 
 
+def _tree_mounts(branch, cfg):
+    mounts = cfg.get("mounts", [])
+    if mounts:
+        for m in mounts:
+            path = m.get("path", "?")
+            sev = m.get("severity", "critical")
+            extras = []
+            if m.get("writable"):
+                extras.append("writable")
+            extra = f", {', '.join(extras)}" if extras else ""
+            branch.add(f"{path} ({sev}{extra})")
+    else:
+        branch.add("[dim](no mounts configured)[/dim]")
+
+
 @cli.command("motd")
 @click.option("--only", default=None, help="Comma-separated list of check modules.")
 @click.pass_context
@@ -900,6 +917,27 @@ def init_cmd(ctx, only):
     if config_path:
         config_path = Path(config_path)
     run_wizard(config_path, only=only)
+
+
+@cli.command("mount-builder")
+@click.option("--dry-run", is_flag=True, help="Preview without making changes.")
+@click.pass_context
+def mount_builder_cmd(ctx, dry_run):
+    """Create systemd mount units for CIFS/NFS network shares."""
+    from labwatch.mount_builder import run_mount_builder
+
+    cfg = {}
+    config_path = ctx.obj.get("config_path")
+    resolved_path = Path(config_path) if config_path else default_config_path()
+    try:
+        cfg = _get_config(ctx)
+    except Exception:
+        pass
+    run_mount_builder(
+        config=cfg,
+        config_path=resolved_path if resolved_path.exists() else None,
+        dry_run=dry_run,
+    )
 
 
 @cli.command("enable")

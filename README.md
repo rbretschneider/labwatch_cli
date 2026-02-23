@@ -183,6 +183,8 @@ Use `--config /tmp/test.yaml` to try it without overwriting your real config.
 | `labwatch motd` | Plain-text login summary for SSH MOTD |
 | `labwatch motd --only updates` | MOTD for specific modules only |
 | `labwatch completion bash` | Print shell completion script (bash/zsh/fish) |
+| `labwatch mount-builder` | Create systemd mount units for CIFS/NFS network shares |
+| `labwatch mount-builder --dry-run` | Preview generated units without installing |
 | `labwatch update` | Update labwatch to the latest PyPI release |
 | `labwatch version` | Show version |
 
@@ -656,6 +658,20 @@ labwatch schedule system-update --every 1w
 **Root privileges:** System updates require root to run `apt-get`. If you're not running as root, the `labwatch init` wizard detects this and shows you exactly how to set up passwordless sudo — a single sudoers line that grants the minimum permission needed. The wizard also automatically adds `sudo` to the cron entry so scheduled updates run correctly.
 
 Notifications are sent via ntfy on completion, with package counts, error status, and reboot status.
+
+## Mount Builder
+
+`labwatch mount-builder` generates and installs systemd `.mount` units for CIFS and NFS network shares. An interactive wizard collects server IPs, share names, and credentials, then creates mount units, override configs with network dependencies and retry logic, credentials files, and optionally a Docker service override so containers wait for mounts.
+
+```bash
+# Interactive wizard — generates and installs mount units via sudo
+labwatch mount-builder
+
+# Preview all generated files and commands without making changes
+labwatch mount-builder --dry-run
+```
+
+The wizard can also be launched from `labwatch init` during the mounts section (Linux only). Generated mounts are automatically added to the labwatch mounts monitoring config.
 
 ## Project Goals
 

@@ -126,6 +126,12 @@ def full_cfg():
                 "wear_critical": 90,
                 "devices": ["/dev/sda"],
             },
+            "mounts": {
+                "enabled": True,
+                "mounts": [
+                    {"path": "/mnt/nas_media", "severity": "critical"},
+                ],
+            },
         },
         "update": {
             "compose_dirs": ["/opt/stacks/media", "/opt/stacks/monitoring"],

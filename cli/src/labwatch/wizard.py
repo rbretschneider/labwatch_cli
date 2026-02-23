@@ -1399,6 +1399,12 @@ def _section_mounts(config: dict, *, from_menu: bool = False) -> None:
                 entry["writable"] = True
             config["checks"]["mounts"]["mounts"].append(entry)
 
+    if mounts_enabled and sys.platform == "linux":
+        click.echo()
+        if _prompt_yn("  Create systemd mount units for network shares? (mount-builder)", default=False):
+            from labwatch.mount_builder import run_mount_builder
+            run_mount_builder(config, config_path=None)
+
 
 def _section_updates(config: dict, *, from_menu: bool = False) -> None:
     click.echo()

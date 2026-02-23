@@ -247,7 +247,7 @@ class TestConfigTreeUpdatesCheck:
 class TestConfigTreeModuleCount:
     def test_all_enabled_count(self, full_cfg):
         text = _render(full_cfg)
-        assert "14 modules" in text
+        assert "15 modules" in text
 
     def test_nothing_enabled(self):
         cfg = {

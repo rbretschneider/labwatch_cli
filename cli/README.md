@@ -72,6 +72,8 @@ The `labwatch init` wizard handles everything: config generation, notification t
 | `labwatch schedule system-update --every 1w` | Schedule system package updates |
 | `labwatch schedule list` | Show all labwatch cron entries |
 | `labwatch schedule remove` | Remove labwatch cron entries |
+| `labwatch mount-builder` | Create systemd mount units for CIFS/NFS shares |
+| `labwatch mount-builder --dry-run` | Preview generated units without installing |
 | `labwatch enable docker` | Enable a check module |
 | `labwatch disable docker` | Disable a check module |
 | `labwatch motd` | Plain-text login summary for SSH MOTD |
@@ -94,6 +96,8 @@ Global options: `--config PATH`, `--no-color`, `--verbose`, `--quiet`
 | **process** | Verify processes running by exact name (`pgrep -x`) |
 | **home_assistant** | API health, external URL, Google Home cloud, authenticated checks |
 | **updates** | Pending package updates (apt/dnf/yum) with threshold alerts |
+| **mounts** | Verifies filesystem mounts (NFS, CIFS, FUSE, bind) are present and accessible |
+| **smart** | S.M.A.R.T. disk health, temperature, and wear via smartctl |
 | **command** | Run shell commands, check exit codes and output patterns |
 
 ## Configuration
