@@ -9,11 +9,12 @@ import getpass
 import ipaddress
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import click
 from rich.console import Console
@@ -86,6 +87,28 @@ def validate_share_name(name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Ownership resolution helpers (Linux only)
+# ---------------------------------------------------------------------------
+
+def _resolve_uid(name: str) -> Optional[int]:
+    """Resolve a username to a UID. Returns None on failure."""
+    import pwd
+    try:
+        return pwd.getpwnam(name).pw_uid
+    except KeyError:
+        return None
+
+
+def _resolve_gid(name: str) -> Optional[int]:
+    """Resolve a group name to a GID. Returns None on failure."""
+    import grp
+    try:
+        return grp.getgrnam(name).gr_gid
+    except KeyError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Detection
 # ---------------------------------------------------------------------------
 
@@ -119,14 +142,31 @@ def generate_mount_unit(share: MountShare) -> str:
     )
 
 
-def generate_override_conf(share: MountShare, credentials_path: Optional[str] = None) -> str:
-    """Return the content of an ``override.conf`` drop-in."""
+def generate_override_conf(
+    share: MountShare,
+    credentials_path: Optional[str] = None,
+    ownership: Optional[dict] = None,
+) -> str:
+    """Return the content of an ``override.conf`` drop-in.
+
+    *ownership* is an optional dict with keys ``uid``, ``gid``,
+    ``file_mode``, ``dir_mode`` — only applied to CIFS shares.
+    """
     if share.mount_type == "cifs" and credentials_path:
         options = f"credentials={credentials_path},rw,_netdev"
     elif share.mount_type == "cifs":
         options = "rw,_netdev"
     else:
         options = "rw,_netdev,soft,timeo=150"
+
+    # Append ownership options for CIFS mounts
+    if share.mount_type == "cifs" and ownership:
+        options += (
+            f",uid={ownership['uid']}"
+            f",gid={ownership['gid']}"
+            f",file_mode={ownership['file_mode']}"
+            f",dir_mode={ownership['dir_mode']}"
+        )
 
     return (
         f"[Unit]\n"
@@ -182,11 +222,89 @@ def _sudo_mkdir(path: str) -> None:
     )
 
 
+def _check_mount_tools(mount_type: str, console: Console) -> bool:
+    """Check that mount helpers are installed. Returns True if ready."""
+    tool = "mount.cifs" if mount_type == "cifs" else "mount.nfs"
+    pkg = "cifs-utils" if mount_type == "cifs" else "nfs-common"
+
+    if shutil.which(tool):
+        return True
+    # Also check /usr/sbin (non-root PATH may miss it)
+    for sbin in ("/usr/sbin", "/sbin"):
+        if os.path.isfile(os.path.join(sbin, tool)):
+            return True
+
+    console.print(f"  [yellow]\u26a0[/yellow] {tool} not found \u2014 required for {mount_type} mounts")
+    console.print(f"    Install: [bold]sudo apt install {pkg} -y[/bold]")
+    if click.confirm(f"  Install {pkg} now?", default=True):
+        try:
+            subprocess.run(
+                ["sudo", "apt", "install", pkg, "-y"],
+                check=True, capture_output=True, text=True,
+            )
+            console.print(f"  [green]\u2714[/green] Installed {pkg}")
+            return True
+        except subprocess.CalledProcessError as e:
+            console.print(f"  [red]\u2718[/red] Failed to install: {e.stderr.strip()}")
+            return False
+        except FileNotFoundError:
+            console.print(f"  [red]\u2718[/red] apt not found")
+            return False
+    return False
+
+
+def _check_fstab_conflicts(shares: List[MountShare], console: Console) -> None:
+    """Warn about fstab entries that conflict with the shares being installed."""
+    try:
+        fstab = Path("/etc/fstab").read_text()
+    except OSError:
+        return
+
+    conflicts = []
+    for share in shares:
+        for i, line in enumerate(fstab.splitlines(), 1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            parts = stripped.split()
+            if len(parts) < 2:
+                continue
+            # parts[0] = device/source, parts[1] = mount point
+            if parts[1] == share.mount_point or parts[0] == share.what:
+                conflicts.append((i, line.strip(), share))
+
+    if not conflicts:
+        return
+
+    console.print()
+    console.print("[yellow]\u26a0  Conflicting fstab entries found:[/yellow]")
+    for lineno, line, share in conflicts:
+        console.print(f"    Line {lineno}: {line}")
+    console.print("  Systemd mount units will fail if fstab also mounts the same path.")
+
+    if click.confirm("  Comment out these fstab lines?", default=True):
+        lines = fstab.splitlines(keepends=True)
+        for lineno, _line_text, _share in conflicts:
+            idx = lineno - 1
+            if not lines[idx].lstrip().startswith("#"):
+                lines[idx] = "# " + lines[idx]  # preserves newline
+        try:
+            new_content = "".join(lines)
+            _sudo_write("/etc/fstab", new_content)
+            console.print("  [green]\u2714[/green] Commented out conflicting fstab entries")
+        except Exception as e:
+            console.print(f"  [red]\u2718[/red] Could not update fstab: {e}")
+            console.print("  Comment them out manually before starting the mount units.")
+    else:
+        console.print("  [yellow]\u26a0[/yellow] Mounts may fail \u2014 comment them out manually if needed.")
+
+
 def install_shares(
     shares: List[MountShare],
     credentials: Optional[Dict[str, tuple]] = None,
     docker_override: bool = False,
     console: Optional[Console] = None,
+    ownership: Optional[dict] = None,
 ) -> List[dict]:
     """Install all generated files via sudo and return a status list.
 
@@ -232,7 +350,8 @@ def install_shares(
 
             # override.conf
             _sudo_mkdir(override_dir)
-            _sudo_write(override_path, generate_override_conf(share, cred_path))
+            own = ownership if share.mount_type == "cifs" else None
+            _sudo_write(override_path, generate_override_conf(share, cred_path, own))
             console.print(f"  [green]\u2714[/green] Wrote {override_path}")
 
             status["ok"] = True
@@ -301,6 +420,7 @@ def preview_shares(
     credentials: Optional[Dict[str, tuple]] = None,
     docker_override: bool = False,
     console: Optional[Console] = None,
+    ownership: Optional[dict] = None,
 ) -> None:
     """Print a Rich table + generated file contents as a preview."""
     if console is None:
@@ -338,7 +458,8 @@ def preview_shares(
 
         override_dir = f"/etc/systemd/system/{s.unit_name}.d"
         console.print(f"[bold]--- {override_dir}/override.conf ---[/bold]")
-        console.print(generate_override_conf(s, cred_path))
+        own = ownership if s.mount_type == "cifs" else None
+        console.print(generate_override_conf(s, cred_path, own))
 
     # Credentials files
     for server_name, (user, _pw) in credentials.items():
@@ -433,6 +554,10 @@ def run_mount_builder(
         default="cifs",
     )
 
+    # --- Check mount tools ---
+    if not _check_mount_tools(mount_type, console):
+        return
+
     # --- Collect NAS servers ---
     servers: List[NasServer] = []
     console.print()
@@ -496,6 +621,38 @@ def run_mount_builder(
             pw = click.prompt("    Password", hide_input=True, default="", show_default=False)
             credentials[sname] = (user, pw)
 
+    # --- CIFS ownership ---
+    ownership: Optional[dict] = None
+    if mount_type == "cifs":
+        console.print()
+        console.print("[bold]CIFS ownership[/bold]")
+        console.print("  Services like Radarr/Sonarr need mount write access.")
+        if click.confirm("  Set mount ownership?", default=False):
+            # Group
+            while True:
+                group_name = click.prompt("    Group name (e.g. media)")
+                gid = _resolve_gid(group_name.strip())
+                if gid is not None:
+                    console.print(f"    [green]\u2714[/green] Found group '{group_name.strip()}' (gid={gid})")
+                    break
+                console.print(f"    [red]\u2718[/red] Group '{group_name.strip()}' not found")
+            # User
+            while True:
+                user_name = click.prompt("    User name (e.g. radarr)")
+                uid = _resolve_uid(user_name.strip())
+                if uid is not None:
+                    console.print(f"    [green]\u2714[/green] Found user '{user_name.strip()}' (uid={uid})")
+                    break
+                console.print(f"    [red]\u2718[/red] User '{user_name.strip()}' not found")
+            # Permissions
+            perms = click.prompt("    File/dir permissions", default="0770")
+            ownership = {
+                "uid": uid,
+                "gid": gid,
+                "file_mode": perms.strip(),
+                "dir_mode": perms.strip(),
+            }
+
     # --- Docker override ---
     docker_override = False
     console.print()
@@ -504,7 +661,7 @@ def run_mount_builder(
 
     # --- Preview ---
     console.print()
-    preview_shares(shares, credentials, docker_override, console)
+    preview_shares(shares, credentials, docker_override, console, ownership)
 
     if dry_run:
         console.print("[dim]Dry run — no changes made.[/dim]")
@@ -515,10 +672,13 @@ def run_mount_builder(
         console.print("[dim]Cancelled.[/dim]")
         return
 
+    # --- Check fstab conflicts ---
+    _check_fstab_conflicts(shares, console)
+
     # --- Install ---
     console.print()
     console.print("[bold]Installing...[/bold]")
-    results = install_shares(shares, credentials, docker_override, console)
+    results = install_shares(shares, credentials, docker_override, console, ownership)
 
     # --- Config integration ---
     if config is not None:

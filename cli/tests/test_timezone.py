@@ -183,3 +183,58 @@ class TestDoctorTimezone:
             mock_sys.stdout.buffer = MagicMock()
             result = runner.invoke(cli, ["--config", str(cfg_path), "doctor"])
         assert "midnight UTC" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# doctor mount tools section
+# ---------------------------------------------------------------------------
+
+class TestDoctorMountTools:
+    """Test the mount-tools checks in the doctor System tools section."""
+
+    @patch("labwatch.cli.Path.read_text", return_value="[Mount]\nOptions=credentials=/etc/samba/creds,rw\n")
+    @patch("labwatch.wizard._get_system_timezone", return_value="America/New_York")
+    @patch("labwatch.cli.validate_config", return_value=[])
+    @patch("labwatch.cli.load_config")
+    def test_doctor_checks_mount_cifs(self, mock_cfg, mock_validate, mock_tz, mock_override, tmp_path):
+        from labwatch.cli import cli
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text("hostname: test\n")
+        mock_cfg.return_value = {
+            "hostname": "test",
+            "notifications": {"ntfy": {"enabled": False}},
+            "checks": {
+                "mounts": {
+                    "enabled": True,
+                    "mounts": [{"path": "/mnt/nas_Photos", "severity": "critical"}],
+                },
+            },
+        }
+        runner = CliRunner()
+        with patch("labwatch.cli.sys") as mock_sys:
+            mock_sys.platform = "linux"
+            mock_sys.stdout = MagicMock()
+            mock_sys.stdout.buffer = MagicMock()
+            result = runner.invoke(cli, ["--config", str(cfg_path), "doctor"])
+        assert "mount.cifs" in result.output
+
+    @patch("labwatch.wizard._get_system_timezone", return_value="America/New_York")
+    @patch("labwatch.cli.validate_config", return_value=[])
+    @patch("labwatch.cli.load_config")
+    def test_doctor_skips_mount_tools_when_disabled(self, mock_cfg, mock_validate, mock_tz, tmp_path):
+        from labwatch.cli import cli
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text("hostname: test\n")
+        mock_cfg.return_value = {
+            "hostname": "test",
+            "notifications": {"ntfy": {"enabled": False}},
+            "checks": {},
+        }
+        runner = CliRunner()
+        with patch("labwatch.cli.sys") as mock_sys:
+            mock_sys.platform = "linux"
+            mock_sys.stdout = MagicMock()
+            mock_sys.stdout.buffer = MagicMock()
+            result = runner.invoke(cli, ["--config", str(cfg_path), "doctor"])
+        assert "mount.cifs" not in result.output
+        assert "mount.nfs" not in result.output

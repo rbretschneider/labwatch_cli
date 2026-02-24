@@ -19,6 +19,10 @@ from labwatch.mount_builder import (
     generate_override_conf,
     generate_credentials_file,
     generate_docker_override,
+    _check_mount_tools,
+    _check_fstab_conflicts,
+    _resolve_uid,
+    _resolve_gid,
     install_shares,
     preview_shares,
     add_shares_to_config,
@@ -120,6 +124,46 @@ class TestValidateShareName:
 
 
 # ---------------------------------------------------------------------------
+# Ownership resolution
+# ---------------------------------------------------------------------------
+
+class TestResolveUid:
+
+    def test_resolves_known_user(self):
+        mock_pwd = MagicMock()
+        entry = MagicMock()
+        entry.pw_uid = 105
+        mock_pwd.getpwnam.return_value = entry
+        with patch.dict("sys.modules", {"pwd": mock_pwd}):
+            assert _resolve_uid("radarr") == 105
+        mock_pwd.getpwnam.assert_called_once_with("radarr")
+
+    def test_returns_none_for_unknown(self):
+        mock_pwd = MagicMock()
+        mock_pwd.getpwnam.side_effect = KeyError("no such user")
+        with patch.dict("sys.modules", {"pwd": mock_pwd}):
+            assert _resolve_uid("nonexistent") is None
+
+
+class TestResolveGid:
+
+    def test_resolves_known_group(self):
+        mock_grp = MagicMock()
+        entry = MagicMock()
+        entry.gr_gid = 1001
+        mock_grp.getgrnam.return_value = entry
+        with patch.dict("sys.modules", {"grp": mock_grp}):
+            assert _resolve_gid("media") == 1001
+        mock_grp.getgrnam.assert_called_once_with("media")
+
+    def test_returns_none_for_unknown(self):
+        mock_grp = MagicMock()
+        mock_grp.getgrnam.side_effect = KeyError("no such group")
+        with patch.dict("sys.modules", {"grp": mock_grp}):
+            assert _resolve_gid("nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
 # Detection
 # ---------------------------------------------------------------------------
 
@@ -185,6 +229,34 @@ class TestGenerateOverrideConf:
 
     def test_nfs(self, nfs_share):
         content = generate_override_conf(nfs_share)
+        assert "Options=rw,_netdev,soft,timeo=150" in content
+
+    def test_cifs_with_ownership(self, cifs_share):
+        ownership = {"uid": 105, "gid": 1001, "file_mode": "0770", "dir_mode": "0770"}
+        content = generate_override_conf(cifs_share, ownership=ownership)
+        assert "uid=105" in content
+        assert "gid=1001" in content
+        assert "file_mode=0770" in content
+        assert "dir_mode=0770" in content
+
+    def test_cifs_with_credentials_and_ownership(self, cifs_share):
+        ownership = {"uid": 105, "gid": 1001, "file_mode": "0770", "dir_mode": "0770"}
+        content = generate_override_conf(
+            cifs_share,
+            "/etc/samba/credentials_california",
+            ownership=ownership,
+        )
+        assert "credentials=/etc/samba/credentials_california" in content
+        assert "uid=105" in content
+        assert "gid=1001" in content
+        assert "file_mode=0770" in content
+        assert "dir_mode=0770" in content
+
+    def test_nfs_ignores_ownership(self, nfs_share):
+        ownership = {"uid": 105, "gid": 1001, "file_mode": "0770", "dir_mode": "0770"}
+        content = generate_override_conf(nfs_share, ownership=ownership)
+        assert "uid=" not in content
+        assert "gid=" not in content
         assert "Options=rw,_netdev,soft,timeo=150" in content
 
 
@@ -283,6 +355,35 @@ class TestInstallShares:
         )
 
     @patch("labwatch.mount_builder.subprocess.run")
+    def test_installs_cifs_with_ownership(self, mock_run, cifs_share):
+        mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
+        console = Console(quiet=True)
+        ownership = {"uid": 105, "gid": 1001, "file_mode": "0770", "dir_mode": "0770"}
+
+        results = install_shares(
+            [cifs_share],
+            credentials={"california": ("admin", "secret")},
+            console=console,
+            ownership=ownership,
+        )
+
+        assert len(results) == 1
+        assert results[0]["ok"] is True
+
+        # Find the override.conf write call and verify ownership in content
+        calls = mock_run.call_args_list
+        override_writes = [
+            c for c in calls
+            if c[0][0][0:2] == ["sudo", "tee"] and "override.conf" in c[0][0][2]
+        ]
+        assert len(override_writes) == 1
+        written_content = override_writes[0][1]["input"]
+        assert "uid=105" in written_content
+        assert "gid=1001" in written_content
+        assert "file_mode=0770" in written_content
+        assert "dir_mode=0770" in written_content
+
+    @patch("labwatch.mount_builder.subprocess.run")
     def test_sudo_write_failure(self, mock_run, cifs_share):
         def _side_effect(cmd, **kwargs):
             if cmd[0] == "sudo" and cmd[1] == "tee":
@@ -332,6 +433,22 @@ class TestPreviewShares:
         )
         mock_run.assert_not_called()
 
+    def test_preview_includes_ownership(self, cifs_share):
+        """Preview output should contain ownership options when provided."""
+        console = Console(file=__import__("io").StringIO(), quiet=False, width=200)
+        ownership = {"uid": 105, "gid": 1001, "file_mode": "0770", "dir_mode": "0770"}
+        preview_shares(
+            [cifs_share],
+            credentials={"california": ("admin", "secret")},
+            console=console,
+            ownership=ownership,
+        )
+        output = console.file.getvalue()
+        assert "uid=105" in output
+        assert "gid=1001" in output
+        assert "file_mode=0770" in output
+        assert "dir_mode=0770" in output
+
 
 # ---------------------------------------------------------------------------
 # Config integration
@@ -379,6 +496,104 @@ class TestAddSharesToConfig:
 
 
 # ---------------------------------------------------------------------------
+# _check_mount_tools
+# ---------------------------------------------------------------------------
+
+class TestCheckMountTools:
+
+    @patch("labwatch.mount_builder.shutil.which", return_value="/usr/sbin/mount.cifs")
+    def test_returns_true_when_tool_found(self, mock_which):
+        console = Console(quiet=True)
+        assert _check_mount_tools("cifs", console) is True
+
+    @patch("labwatch.mount_builder.subprocess.run")
+    @patch("labwatch.mount_builder.click.confirm", return_value=True)
+    @patch("labwatch.mount_builder.os.path.isfile", return_value=False)
+    @patch("labwatch.mount_builder.shutil.which", return_value=None)
+    def test_offers_install_when_missing(self, mock_which, mock_isfile, mock_confirm, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        console = Console(quiet=True)
+        assert _check_mount_tools("cifs", console) is True
+        mock_run.assert_called_once_with(
+            ["sudo", "apt", "install", "cifs-utils", "-y"],
+            check=True, capture_output=True, text=True,
+        )
+
+    @patch("labwatch.mount_builder.click.confirm", return_value=False)
+    @patch("labwatch.mount_builder.os.path.isfile", return_value=False)
+    @patch("labwatch.mount_builder.shutil.which", return_value=None)
+    def test_returns_false_on_decline(self, mock_which, mock_isfile, mock_confirm):
+        console = Console(quiet=True)
+        assert _check_mount_tools("nfs", console) is False
+
+    @patch("labwatch.mount_builder.subprocess.run", side_effect=subprocess.CalledProcessError(1, "apt", stderr="E: Unable to locate"))
+    @patch("labwatch.mount_builder.click.confirm", return_value=True)
+    @patch("labwatch.mount_builder.os.path.isfile", return_value=False)
+    @patch("labwatch.mount_builder.shutil.which", return_value=None)
+    def test_returns_false_on_install_failure(self, mock_which, mock_isfile, mock_confirm, mock_run):
+        console = Console(quiet=True)
+        assert _check_mount_tools("cifs", console) is False
+
+    @patch("labwatch.mount_builder.os.path.isfile")
+    @patch("labwatch.mount_builder.os.path.join", side_effect=lambda *a: "/".join(a))
+    @patch("labwatch.mount_builder.shutil.which", return_value=None)
+    def test_finds_in_sbin(self, mock_which, mock_join, mock_isfile):
+        def isfile_side_effect(path):
+            return path == "/usr/sbin/mount.nfs"
+        mock_isfile.side_effect = isfile_side_effect
+        console = Console(quiet=True)
+        assert _check_mount_tools("nfs", console) is True
+
+
+# ---------------------------------------------------------------------------
+# _check_fstab_conflicts
+# ---------------------------------------------------------------------------
+
+class TestCheckFstabConflicts:
+
+    def test_no_conflicts(self, cifs_share):
+        fstab_content = "UUID=abc /boot ext4 defaults 0 1\n"
+        console = Console(quiet=True)
+        with patch("labwatch.mount_builder.Path.read_text", return_value=fstab_content):
+            _check_fstab_conflicts([cifs_share], console)
+        # No exception, no prompt — just returns
+
+    def test_detects_mount_point_conflict(self, cifs_share):
+        fstab_content = "//10.0.0.220/Photos /mnt/california_Photos cifs defaults 0 0\n"
+        console = Console(quiet=True)
+        with patch("labwatch.mount_builder.Path.read_text", return_value=fstab_content):
+            with patch("labwatch.mount_builder.click.confirm", return_value=False) as mock_confirm:
+                _check_fstab_conflicts([cifs_share], console)
+                mock_confirm.assert_called_once()
+
+    def test_comments_out_on_confirm(self, cifs_share):
+        fstab_content = "//10.0.0.220/Photos /mnt/california_Photos cifs defaults 0 0\n"
+        console = Console(quiet=True)
+        with patch("labwatch.mount_builder.Path.read_text", return_value=fstab_content):
+            with patch("labwatch.mount_builder.click.confirm", return_value=True):
+                with patch("labwatch.mount_builder._sudo_write") as mock_write:
+                    _check_fstab_conflicts([cifs_share], console)
+                    mock_write.assert_called_once()
+                    written = mock_write.call_args[0][1]
+                    assert written.startswith("# ")
+
+    def test_skips_on_decline(self, cifs_share):
+        fstab_content = "//10.0.0.220/Photos /mnt/california_Photos cifs defaults 0 0\n"
+        console = Console(quiet=True)
+        with patch("labwatch.mount_builder.Path.read_text", return_value=fstab_content):
+            with patch("labwatch.mount_builder.click.confirm", return_value=False):
+                with patch("labwatch.mount_builder._sudo_write") as mock_write:
+                    _check_fstab_conflicts([cifs_share], console)
+                    mock_write.assert_not_called()
+
+    def test_handles_missing_fstab(self, cifs_share):
+        console = Console(quiet=True)
+        with patch("labwatch.mount_builder.Path.read_text", side_effect=OSError):
+            # Should return silently
+            _check_fstab_conflicts([cifs_share], console)
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -415,11 +630,12 @@ class TestRunMountBuilder:
         # Should not raise
         run_mount_builder(config)
 
+    @patch("labwatch.mount_builder._check_mount_tools", return_value=True)
     @patch("labwatch.mount_builder.detect_existing_mount_units", return_value=[])
     @patch("labwatch.mount_builder.click.confirm", return_value=False)
     @patch("labwatch.mount_builder.click.prompt")
     @patch("labwatch.mount_builder.sys")
-    def test_dry_run_skips_install(self, mock_sys, mock_prompt, mock_confirm, mock_detect):
+    def test_dry_run_skips_install(self, mock_sys, mock_prompt, mock_confirm, mock_detect, mock_tools):
         """Dry run should not call install_shares."""
         mock_sys.platform = "linux"
         # Simulate: cifs type, one server, one share, then finish

@@ -1401,6 +1401,8 @@ def doctor_cmd(ctx):
         "ping": "sudo apt install iputils-ping",
         "ip": "sudo apt install iproute2",
         "smartctl": "sudo apt install smartmontools",
+        "mount.cifs": "sudo apt install cifs-utils",
+        "mount.nfs": "sudo apt install nfs-common",
     }
 
     tool_checks = []
@@ -1414,6 +1416,28 @@ def doctor_cmd(ctx):
         tool_checks.append(("ip", "network"))
     if checks_cfg.get("smart", {}).get("enabled"):
         tool_checks.append(("smartctl", "smart"))
+
+    # Mount tools — check based on existing systemd mount units
+    mounts_cfg = checks_cfg.get("mounts", {})
+    if mounts_cfg.get("enabled") and mounts_cfg.get("mounts"):
+        _need_cifs = False
+        _need_nfs = False
+        for m in mounts_cfg["mounts"]:
+            mp = m.get("path", "")
+            unit_name = mp.lstrip("/").replace("/", "-") + ".mount"
+            override = Path(f"/etc/systemd/system/{unit_name}.d/override.conf")
+            try:
+                content = override.read_text()
+                if "credentials=" in content:
+                    _need_cifs = True
+                elif "Type=nfs" in content:
+                    _need_nfs = True
+            except OSError:
+                pass
+        if _need_cifs:
+            tool_checks.append(("mount.cifs", "mounts (CIFS)"))
+        if _need_nfs:
+            tool_checks.append(("mount.nfs", "mounts (NFS)"))
 
     if tool_checks:
         import shutil
