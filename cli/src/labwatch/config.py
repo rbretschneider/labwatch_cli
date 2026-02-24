@@ -4,6 +4,7 @@ import os
 import platform
 import copy
 import re
+import stat
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -170,6 +171,9 @@ def save_config(config: Dict[str, Any], path: Optional[Path] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    # Restrict config file to owner-only on Unix (may contain tokens/secrets)
+    if os.name != "nt":
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
     return path
 
 

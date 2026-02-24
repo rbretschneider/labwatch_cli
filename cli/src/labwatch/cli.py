@@ -51,7 +51,13 @@ def _get_console(ctx) -> Console:
     return Console(no_color=no_color)
 
 
-@click.group()
+_DISCLAIMER = (
+    "This software is provided AS IS, without warranty of any kind. "
+    "Use at your own risk."
+)
+
+
+@click.group(epilog=_DISCLAIMER)
 @click.option("--config", "config_path", type=click.Path(), default=None,
               help="Path to config file.")
 @click.option("--no-color", is_flag=True, help="Disable colored output.")

@@ -986,6 +986,7 @@ def _section_home_assistant(config: dict, *, from_menu: bool = False) -> None:
         token = click.prompt(
             "  Long-lived access token (empty to skip)",
             default=existing_token, show_default=False,
+            hide_input=True,
         )
         config["checks"]["home_assistant"]["token"] = token.strip()
         click.secho(
@@ -1841,6 +1842,12 @@ def run_wizard(config_path: Optional[Path] = None, only: Optional[str] = None) -
     click.echo()
     click.secho("labwatch setup wizard", bold=True)
     click.secho("=" * 40)
+    click.echo()
+    click.secho(
+        "  This software is provided AS IS, without warranty of any kind.\n"
+        "  Use at your own risk.",
+        dim=True,
+    )
     click.echo()
     click.echo(f"  Config file: {path}")
 
