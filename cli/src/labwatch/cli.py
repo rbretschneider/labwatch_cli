@@ -563,6 +563,36 @@ def summarize_cmd(ctx):
     tree = _build_config_tree(cfg)
     console.print(tree)
 
+    # --- System Resources (Linux only) ---
+    if sys.platform == "linux":
+        console.print()
+        res_tree = Tree("[bold]System Resources (managed by labwatch)[/bold]")
+
+        # Systemd units
+        from labwatch.mount_builder import detect_managed_units
+        units = detect_managed_units()
+        unit_branch = res_tree.add("Systemd Units")
+        if units:
+            for u in units:
+                unit_branch.add(u)
+        else:
+            unit_branch.add("[dim](none)[/dim]")
+
+        # Cron entries
+        from labwatch import scheduler
+        try:
+            entries = scheduler.list_entries()
+        except Exception:
+            entries = []
+        cron_branch = res_tree.add("Cron Entries")
+        if entries:
+            for e in entries:
+                cron_branch.add(e)
+        else:
+            cron_branch.add("[dim](none)[/dim]")
+
+        console.print(res_tree)
+
 
 @cli.command("validate")
 @click.pass_context
