@@ -23,6 +23,25 @@ Homelabs tend to grow into a sprawl of containers, services, and network configs
 - Hardened for unattended use. File lock prevents overlapping runs, rotating log file provides forensic history, dead man's switch pings an external service so you know labwatch itself is still running.
 - Extensible. Plugin architecture for checks and notification backends.
 
+## Supported Platforms
+
+labwatch is built for **Linux servers**, specifically **Debian/Ubuntu** (including Raspberry Pi OS and DietPi). That's where the full feature set works — cron scheduling, systemd monitoring, apt-get system updates, SMART disk health, mount management, and everything else.
+
+| Feature | Debian/Ubuntu | Other Linux | macOS | Windows |
+|---------|:---:|:---:|:---:|:---:|
+| Core checks (system, docker, http, dns, certs, ping, process) | Yes | Yes | Yes | Yes |
+| Notifications (ntfy) | Yes | Yes | Yes | Yes |
+| Cron scheduling (`labwatch schedule`) | Yes | Yes | No | No |
+| Systemd unit monitoring | Yes | Yes | No | No |
+| System updates (`labwatch system-update`) | Yes | No | No | No |
+| Package update counting (`updates` check) | Yes (apt) | Yes (dnf/yum) | No | No |
+| S.M.A.R.T. disk health | Yes | Yes | No | No |
+| Mount monitoring (`/proc/mounts`) | Yes | Yes | No | No |
+| Mount builder (systemd units) | Yes | Yes | No | No |
+| Network interface stats (`ip`, sysfs) | Yes | Yes | No | No |
+
+Non-Linux users can still use labwatch for Docker, HTTP, DNS, certificate, and system resource monitoring — but scheduling, system updates, and Linux-specific checks won't be available.
+
 ## What It Monitors
 
 | Module | What it checks |
@@ -539,9 +558,8 @@ When running from cron, labwatch includes three safety features that require no 
 **Rotating log** — every run logs to `~/.config/labwatch/labwatch.log`. Max 512KB per file with 1 backup = 1MB total on disk. Safe for Raspberry Pi SD cards.
 
 ```
-2026-02-19 14:30:00 INFO check started
-2026-02-19 14:30:02 INFO check complete: 8 ok, 1 failed, worst=warning
-2026-02-19 14:30:02 INFO notifications sent for 1 failure(s)
+2026-02-19 14:30:02 INFO check 7/8 ok (system, docker, http, dns, ping, certs, nginx) | WARNING: updates — 12 pending
+2026-02-19 14:30:02 INFO notified: updates warning
 2026-02-19 14:30:03 INFO heartbeat pinged
 ```
 
