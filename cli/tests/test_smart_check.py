@@ -70,7 +70,7 @@ class TestDeviceScanning:
         mock_run.return_value = MagicMock(returncode=0, stdout=scan_output)
 
         check = SmartCheck(_cfg())
-        devices = check._scan_devices(has_smartctl=True)
+        devices = check._scan_devices(smartctl_path="/usr/sbin/smartctl")
         assert "/dev/sda" in devices
         assert "/dev/nvme0" in devices
 
@@ -79,7 +79,7 @@ class TestDeviceScanning:
     def test_scan_handles_timeout(self, mock_run, mock_which):
         mock_run.side_effect = subprocess.TimeoutExpired("smartctl", 10)
         check = SmartCheck(_cfg())
-        devices = check._scan_devices(has_smartctl=True)
+        devices = check._scan_devices(smartctl_path="/usr/sbin/smartctl")
         assert devices == []
 
     @patch("labwatch.checks.smart.shutil.which", return_value="/usr/sbin/smartctl")
@@ -87,7 +87,7 @@ class TestDeviceScanning:
     def test_scan_handles_invalid_json(self, mock_run, mock_which):
         mock_run.return_value = MagicMock(returncode=0, stdout="not json")
         check = SmartCheck(_cfg())
-        devices = check._scan_devices(has_smartctl=True)
+        devices = check._scan_devices(smartctl_path="/usr/sbin/smartctl")
         assert devices == []
 
 

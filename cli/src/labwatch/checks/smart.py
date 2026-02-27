@@ -26,8 +26,15 @@ class SmartCheck(BaseCheck):
 
         results = []
 
-        # Check smartctl availability
-        has_smartctl = shutil.which("smartctl") is not None
+        # Check smartctl availability — also check sbin paths since cron
+        # often has a minimal PATH that excludes /usr/sbin
+        smartctl_path = shutil.which("smartctl")
+        if not smartctl_path:
+            for sbin in ("/usr/sbin/smartctl", "/sbin/smartctl"):
+                if Path(sbin).exists():
+                    smartctl_path = sbin
+                    break
+        has_smartctl = smartctl_path is not None
 
         if not has_smartctl and not self._has_mmc_devices():
             return [CheckResult(
@@ -43,7 +50,7 @@ class SmartCheck(BaseCheck):
         if configured_devices:
             devices = configured_devices
         else:
-            devices = self._scan_devices(has_smartctl)
+            devices = self._scan_devices(smartctl_path)
 
         if not devices:
             return [CheckResult(
@@ -55,9 +62,10 @@ class SmartCheck(BaseCheck):
         for device in devices:
             if device.startswith("/sys/block/mmcblk"):
                 results.extend(self._check_mmc(device, wear_warn, wear_crit))
-            elif has_smartctl:
+            elif smartctl_path:
                 results.extend(self._check_smartctl(
-                    device, temp_warn, temp_crit, wear_warn, wear_crit,
+                    smartctl_path, device,
+                    temp_warn, temp_crit, wear_warn, wear_crit,
                 ))
 
         return results
@@ -66,15 +74,15 @@ class SmartCheck(BaseCheck):
         """Check if any mmcblk devices exist in sysfs."""
         return bool(list(Path("/sys/block").glob("mmcblk*"))) if Path("/sys/block").exists() else False
 
-    def _scan_devices(self, has_smartctl: bool) -> List[str]:
+    def _scan_devices(self, smartctl_path: Optional[str]) -> List[str]:
         """Discover SMART-capable devices."""
         devices = []
 
         # smartctl --scan for ATA/SCSI/NVMe
-        if has_smartctl:
+        if smartctl_path:
             try:
                 result = subprocess.run(
-                    ["smartctl", "--scan", "-j"],
+                    [smartctl_path, "--scan", "-j"],
                     capture_output=True, text=True, timeout=10,
                 )
                 if result.returncode == 0 or result.stdout.strip():
@@ -96,14 +104,14 @@ class SmartCheck(BaseCheck):
         return devices
 
     def _check_smartctl(
-        self, device: str,
+        self, smartctl_path: str, device: str,
         temp_warn: float, temp_crit: float,
         wear_warn: float, wear_crit: float,
     ) -> List[CheckResult]:
         """Run smartctl against a single device and parse results."""
         try:
             result = subprocess.run(
-                ["smartctl", "-a", "-j", device],
+                [smartctl_path, "-a", "-j", device],
                 capture_output=True, text=True, timeout=30,
             )
         except subprocess.TimeoutExpired:
