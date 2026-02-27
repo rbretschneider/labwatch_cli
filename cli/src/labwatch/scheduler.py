@@ -16,7 +16,7 @@ _SENTINEL_END = "# ── END LABWATCH ENTRIES ──"
 _INTERVAL_RE = re.compile(r"^(\d+)([mhdw])$")
 
 
-def parse_interval(interval: str) -> str:
+def parse_interval(interval: str, *, offset: int = 0) -> str:
     """Convert a human interval like '5m', '4h', '1d', '1w' to a cron expression.
 
     Supported formats:
@@ -24,6 +24,11 @@ def parse_interval(interval: str) -> str:
       4h  → 0 */4 * * *
       1d  → 0 0 * * *
       1w  → 0 0 * * 0   (weekly, Sunday at midnight)
+
+    When *offset* > 0 the minute field is shifted to avoid collisions with
+    other entries that fire on the interval boundary.  For example
+    ``parse_interval("5m", offset=1)`` produces ``1-59/5 * * * *`` so the
+    job runs at :01, :06, :11 … instead of :00, :05, :10 ….
     """
     match = _INTERVAL_RE.match(interval.strip())
     if not match:
@@ -37,19 +42,21 @@ def parse_interval(interval: str) -> str:
     if unit == "m":
         if value < 1 or value > 59:
             raise ValueError(f"Minute interval must be 1-59, got {value}")
+        if offset:
+            return f"{offset}-59/{value} * * * *"
         return f"*/{value} * * * *"
     elif unit == "h":
         if value < 1 or value > 23:
             raise ValueError(f"Hour interval must be 1-23, got {value}")
-        return f"0 */{value} * * *"
+        return f"{offset} */{value} * * *"
     elif unit == "d":
         if value != 1:
             raise ValueError("Day interval only supports 1d (daily at midnight)")
-        return "0 0 * * *"
+        return f"{offset} 0 * * *"
     elif unit == "w":
         if value != 1:
             raise ValueError("Week interval only supports 1w (weekly on Sunday)")
-        return "0 0 * * 0"
+        return f"{offset} 0 * * 0"
 
     raise ValueError(f"Unknown unit '{unit}'")
 
@@ -175,7 +182,9 @@ def add_entry(subcommand: str, interval: str, modules: Optional[List[str]] = Non
     Returns the cron line that was added.
     """
     _check_platform()
-    cron_expr = parse_interval(interval)
+    # Offset per-module entries by 1 minute so they don't collide with
+    # the main (un-scoped) check entry that fires on the interval mark.
+    cron_expr = parse_interval(interval, offset=1 if modules else 0)
     labwatch_path = resolve_labwatch_path()
     sudo_prefix = "sudo " if use_sudo else ""
 

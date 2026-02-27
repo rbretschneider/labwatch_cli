@@ -175,7 +175,7 @@ class TestAddEntry:
         mock_run.side_effect = fake_run
 
         line = add_entry("check", "1m", modules=["network"])
-        assert "*/1 * * * *" in line
+        assert "1-59/1 * * * *" in line
         assert "--only network" in line
         assert "# labwatch:check:network" in line
 
@@ -187,7 +187,7 @@ class TestAddEntry:
         mock_run.side_effect = fake_run
 
         line = add_entry("check", "30m", modules=["docker", "system"])
-        assert "*/30 * * * *" in line
+        assert "1-59/30 * * * *" in line
         assert "--only docker,system" in line
         assert "# labwatch:check:docker,system" in line
 
@@ -236,7 +236,7 @@ class TestAddEntry:
             if "labwatch:check:network" in l
         ]
         assert len(lw_lines) == 1
-        assert "*/5 * * * *" in lw_lines[0]
+        assert "1-59/5 * * * *" in lw_lines[0]
 
     @patch("labwatch.scheduler.sys.platform", "linux")
     @patch("labwatch.scheduler.resolve_labwatch_path", return_value="/usr/bin/labwatch")
