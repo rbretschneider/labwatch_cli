@@ -1,5 +1,6 @@
 """Orchestrates checks and notifications."""
 
+import logging
 import sys
 from typing import Dict, List, Optional
 
@@ -7,6 +8,8 @@ from labwatch.checks import get_check_classes
 from labwatch.models import CheckReport, CheckResult, Severity
 from labwatch.notifications import get_notifiers
 from labwatch.state import load_state, save_state
+
+_log = logging.getLogger("labwatch")
 
 SEVERITY_ORDER = {
     Severity.OK: 0,
@@ -116,12 +119,18 @@ class Runner:
                 for r in new_failures
             ]
             self._send(notifiers, title, "\n".join(lines), worst.value)
+            _log.info("notified: %s", "; ".join(
+                f"{r.name} {r.severity.value}" for r in new_failures))
 
         # Send recovery notification
         if recoveries:
             title = f"[{report.hostname}] RECOVERED"
             lines = [f"OK: {name} - recovered" for name in recoveries]
             self._send(notifiers, title, "\n".join(lines), "ok")
+            _log.info("notified: recovered %s", ", ".join(recoveries))
+
+        if not new_failures and not recoveries:
+            _log.info("notify skipped: no state change (dedup)")
 
         # Persist current state
         prev_state["checks"] = current

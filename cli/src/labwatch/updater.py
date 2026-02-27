@@ -262,8 +262,10 @@ class ComposeUpdater:
             title = f"[{hostname}] Docker update completed"
         message = "\n".join(lines)
 
+        _log.info("notified: %s", title)
         for notifier in notifiers:
             try:
                 notifier.send(title, message)
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("notification failed via %s: %s",
+                             type(notifier).__name__, e)

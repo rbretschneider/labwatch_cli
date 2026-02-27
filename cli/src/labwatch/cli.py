@@ -155,9 +155,6 @@ def check_cmd(ctx, only, as_json, no_notify):
             runner.notify(report)
             if ctx.obj.get("verbose"):
                 console.print("[dim]Notifications sent.[/dim]")
-            logger.info("notifications sent for %d failure(s)",
-                        sum(1 for r in report.results
-                            if r.severity in (Severity.WARNING, Severity.CRITICAL)))
 
         # Build a concise but informative log line
         ok_names = [r.name for r in report.results if r.severity == Severity.OK]

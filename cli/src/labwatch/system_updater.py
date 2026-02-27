@@ -1,5 +1,6 @@
 """System package update engine for labwatch (Debian/DietPi apt-get)."""
 
+import logging
 import os
 import re
 import subprocess
@@ -8,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from labwatch.notifications import get_notifiers
+
+_log = logging.getLogger("labwatch")
 
 # Parse lines like "package/suite x.y.z amd64 [upgradable from: x.y.w]"
 _APT_LIST_RE = re.compile(r"^(\S+?)(?:/\S+)?\s")
@@ -157,11 +160,13 @@ class SystemUpdater:
             title = f"[{hostname}] System update completed"
             message = ", ".join(parts)
 
+        _log.info("notified: %s — %s", title, message)
         for notifier in notifiers:
             try:
                 notifier.send(title, message)
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("notification failed via %s: %s",
+                             type(notifier).__name__, e)
 
     def do_reboot(self) -> None:
         """Schedule a reboot in 1 minute (gives time for notification to send)."""
