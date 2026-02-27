@@ -60,7 +60,7 @@ Non-Linux users can still use labwatch for Docker, HTTP, DNS, certificate, and s
 | **updates** | Counts pending package updates (apt/dnf/yum). Warn at N+ pending, critical at M+. |
 | **smart** | S.M.A.R.T. disk health for HDDs, SSDs, and NVMe via smartctl. Raspberry Pi SD/eMMC wear via sysfs. Alerts on failing health, high temps, excessive wear, reallocated sectors. |
 | **mounts** | Verifies expected filesystem mounts (NFS, CIFS, FUSE, bind) are present and accessible. Catches stale NFS mounts via subprocess timeout. Optional write-access check. |
-| **command** | Run any shell command. Exit 0 = OK, non-zero = failure. Optional output string matching. |
+| **command** | Run any shell command or Docker container exec. Per-command timeout, per-command schedule (e.g. `5m`, `1d`), and optional output string matching. |
 
 ## Install
 
@@ -175,6 +175,7 @@ Use `--config /tmp/test.yaml` to try it without overwriting your real config.
 | `labwatch init --only docker,http` | Re-run wizard for specific sections only |
 | `labwatch check` | Run all enabled checks, notify on failures |
 | `labwatch check --only system,docker` | Run specific check modules |
+| `labwatch check --only command@5m` | Run only command entries with `schedule: "5m"` |
 | `labwatch check --json` | JSON output for scripting |
 | `labwatch check --no-notify` | Run checks without sending notifications |
 | `labwatch discover` | List Docker containers, suggest HTTP endpoints |
@@ -397,6 +398,18 @@ checks:
         command: "/usr/local/bin/my-check.sh"
         expect_exit: 0
         severity: "warning"
+      - name: "photoprism index"
+        container: "photoprism"       # docker exec shorthand
+        command: "photoprism index"
+        timeout: 600                  # 10 minutes (default 30s)
+        schedule: "1d"                # runs daily (own cron tier)
+        severity: "warning"
+      - name: "tunnel check"
+        command: "curl -sf https://my-tunnel/health"
+        expect_output: "ok"
+        timeout: 15
+        schedule: "5m"                # runs every 5 minutes
+        severity: "critical"
 
 update:
   compose_dirs:
@@ -450,7 +463,7 @@ labwatch manages its own cron entries so you don't have to edit crontab by hand.
 # ── END LABWATCH ENTRIES ──
 ```
 
-Use `--only` to run different check modules at different frequencies. Each `--only` combination gets its own cron entry, so they all coexist:
+Use `--only` to run different check modules at different frequencies. Each `--only` combination gets its own cron entry, so they all coexist. Command entries with a `schedule` field get their own tier automatically using `command@INTERVAL` syntax:
 
 ```bash
 # Network interface checks every minute (VPN tunnels, WireGuard)
@@ -464,6 +477,12 @@ labwatch schedule check --only docker,system --every 30m
 
 # Package updates daily
 labwatch schedule check --only updates --every 1d
+
+# Only command entries with schedule: "5m"
+labwatch schedule check --only command@5m --every 5m
+
+# Only command entries with schedule: "1d"
+labwatch schedule check --only command@1d --every 1d
 
 # Docker Compose image updates weekly
 labwatch schedule docker-update --every 1w
