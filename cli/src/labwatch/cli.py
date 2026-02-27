@@ -554,10 +554,31 @@ def schedule_remove(ctx, only):
 @click.pass_context
 def summarize_cmd(ctx):
     """Show a Rich tree overview of the current configuration."""
+    from rich.panel import Panel
+    from labwatch.logging_setup import log_path
+
     console = _get_console(ctx)
     config_path = ctx.obj.get("config_path")
     resolved_path = Path(config_path) if config_path else default_config_path()
     cfg = _get_config(ctx)
+
+    # --- Recent Activity (from log file) ---
+    lp = log_path()
+    activity_lines: list[str] = []
+    if lp.exists():
+        try:
+            with open(lp, "r", errors="replace") as f:
+                activity_lines = f.readlines()[-15:]
+        except OSError:
+            pass
+    if activity_lines:
+        text = "".join(activity_lines).rstrip()
+        console.print(Panel(text, title="Recent Activity", subtitle=str(lp)))
+    else:
+        console.print(Panel("[dim](no activity recorded yet)[/dim]",
+                            title="Recent Activity", subtitle=str(lp)))
+    console.print()
+
     console.print(f"[bold]Config file:[/bold] {resolved_path}")
     console.print()
     tree = _build_config_tree(cfg)
@@ -720,6 +741,8 @@ def _build_config_tree(cfg: dict) -> Tree:
         upd_branch = tree.add(f"[bold]Docker auto-updates ({len(compose_dirs)} directories)[/bold]")
         for d in compose_dirs:
             upd_branch.add(d)
+        if cfg.get("update", {}).get("notify_always", False):
+            upd_branch.add("[green]notify_always: yes[/green]")
 
     # --- System updates ---
     system_update = cfg.get("update", {}).get("system", {})
@@ -1503,7 +1526,7 @@ def doctor_cmd(ctx):
 
     # --- Logging ---
     console.print("[bold]Logging[/bold]")
-    from labwatch.logging_setup import _log_path
+    from labwatch.logging_setup import log_path as _log_path
     log_dir = _log_path().parent
     if log_dir.exists():
         if os.access(str(log_dir), os.W_OK):

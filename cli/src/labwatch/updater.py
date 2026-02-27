@@ -1,5 +1,6 @@
 """Docker Compose update engine for labwatch."""
 
+import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -9,6 +10,8 @@ from typing import Dict, List, Optional
 import yaml
 
 from labwatch.notifications import get_notifiers
+
+_log = logging.getLogger("labwatch")
 
 # Compose file names to search for, in priority order
 COMPOSE_FILES = [
@@ -115,6 +118,13 @@ class ComposeUpdater:
         results = []
         for dir_path in self.compose_dirs:
             result = self._update_directory(Path(dir_path))
+            if result.error:
+                _log.info("docker-update %s: ERROR %s", dir_path, result.error)
+            elif result.services_updated:
+                _log.info("docker-update %s: updated %s",
+                          dir_path, ", ".join(result.services_updated))
+            else:
+                _log.info("docker-update %s: no changes", dir_path)
             results.append(result)
         return results
 
@@ -223,6 +233,7 @@ class ComposeUpdater:
         if not notifiers:
             return
 
+        notify_always = self.config.get("update", {}).get("notify_always", False)
         hostname = self.config.get("hostname", "unknown")
         lines = []
         any_updates = False
@@ -235,11 +246,20 @@ class ComposeUpdater:
                 lines.append(
                     f"{r.directory}: updated {', '.join(r.services_updated)}"
                 )
+            elif notify_always:
+                lines.append(f"{r.directory}: no changes")
 
         if not lines:
-            return
+            if not notify_always:
+                return
+            lines.append("All images up to date — no changes")
 
-        title = f"[{hostname}] Docker update {'completed' if not any_updates else 'applied'}"
+        if any_updates:
+            title = f"[{hostname}] Docker update applied"
+        elif notify_always:
+            title = f"[{hostname}] Docker update — no changes"
+        else:
+            title = f"[{hostname}] Docker update completed"
         message = "\n".join(lines)
 
         for notifier in notifiers:

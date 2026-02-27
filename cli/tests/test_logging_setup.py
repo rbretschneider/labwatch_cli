@@ -4,13 +4,13 @@ import logging
 from logging.handlers import RotatingFileHandler
 from unittest.mock import patch
 
-from labwatch.logging_setup import setup_logging, _log_path
+from labwatch.logging_setup import setup_logging, log_path
 
 
 class TestSetupLogging:
     def test_returns_labwatch_logger(self, tmp_path):
         log_file = tmp_path / "labwatch.log"
-        with patch("labwatch.logging_setup._log_path", return_value=log_file):
+        with patch("labwatch.logging_setup.log_path", return_value=log_file):
             # Clear any existing handlers from prior tests
             logger = logging.getLogger("labwatch")
             logger.handlers.clear()
@@ -26,7 +26,7 @@ class TestSetupLogging:
     def test_idempotent(self, tmp_path):
         """Calling setup_logging() twice should not add duplicate handlers."""
         log_file = tmp_path / "labwatch.log"
-        with patch("labwatch.logging_setup._log_path", return_value=log_file):
+        with patch("labwatch.logging_setup.log_path", return_value=log_file):
             logger = logging.getLogger("labwatch")
             logger.handlers.clear()
 
@@ -43,7 +43,7 @@ class TestSetupLogging:
     def test_handler_max_bytes(self, tmp_path):
         """RotatingFileHandler should be configured to 512KB."""
         log_file = tmp_path / "labwatch.log"
-        with patch("labwatch.logging_setup._log_path", return_value=log_file):
+        with patch("labwatch.logging_setup.log_path", return_value=log_file):
             logger = logging.getLogger("labwatch")
             logger.handlers.clear()
 
@@ -62,7 +62,7 @@ class TestSetupLogging:
     def test_creates_log_file(self, tmp_path):
         """Log file should be created after setup and a write."""
         log_file = tmp_path / "labwatch.log"
-        with patch("labwatch.logging_setup._log_path", return_value=log_file):
+        with patch("labwatch.logging_setup.log_path", return_value=log_file):
             logger = logging.getLogger("labwatch")
             logger.handlers.clear()
 
@@ -79,7 +79,7 @@ class TestSetupLogging:
     def test_log_format(self, tmp_path):
         """Log lines should contain the expected format elements."""
         log_file = tmp_path / "labwatch.log"
-        with patch("labwatch.logging_setup._log_path", return_value=log_file):
+        with patch("labwatch.logging_setup.log_path", return_value=log_file):
             logger = logging.getLogger("labwatch")
             logger.handlers.clear()
 

@@ -109,6 +109,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "update": {
         "compose_dirs": [],
+        "notify_always": False,
         "system": {
             "enabled": False,
             "mode": "safe",
@@ -378,6 +379,10 @@ def validate_config(config: Dict[str, Any]) -> list:
         for i, d in enumerate(compose_dirs):
             if not isinstance(d, str) or not d.strip():
                 errors.append(f"update.compose_dirs[{i}] must be a non-empty string")
+
+    notify_always = config.get("update", {}).get("notify_always", False)
+    if not isinstance(notify_always, bool):
+        errors.append("update.notify_always must be a boolean")
 
     # Validate update.system
     sys_update = config.get("update", {}).get("system", {})

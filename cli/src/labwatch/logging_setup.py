@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
-def _log_path() -> Path:
+def log_path() -> Path:
     """Return the log file path, next to the config/state files."""
     if os.name == "nt":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
@@ -29,7 +29,7 @@ def setup_logging() -> logging.Logger:
 
     logger.setLevel(logging.INFO)
 
-    log_file = _log_path()
+    log_file = log_path()
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
     handler = RotatingFileHandler(
