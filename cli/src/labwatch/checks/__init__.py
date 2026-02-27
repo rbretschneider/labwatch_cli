@@ -1,7 +1,8 @@
 """Check plugin registry."""
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Type
 
 from labwatch.models import CheckResult
 
@@ -39,9 +40,11 @@ def get_check_classes() -> Dict[str, Type["BaseCheck"]]:
 class BaseCheck(ABC):
     """Abstract base class for all checks."""
 
-    def __init__(self, config: dict, verbose: bool = False):
+    def __init__(self, config: dict, verbose: bool = False,
+                 module_filter: str | None = None):
         self.config = config
         self.verbose = verbose
+        self.module_filter = module_filter
 
     @abstractmethod
     def run(self) -> List[CheckResult]:

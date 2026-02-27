@@ -1452,6 +1452,18 @@ def _section_updates(config: dict, *, from_menu: bool = False) -> None:
             )
 
 
+_SCHEDULE_CHOICES: List[Tuple[str, str]] = [
+    ("",   "Default (runs with the module's tier)"),
+    ("1m", "Every minute"),
+    ("5m", "Every 5 minutes"),
+    ("30m", "Every 30 minutes"),
+    ("1h",  "Hourly"),
+    ("4h",  "Every 4 hours"),
+    ("1d",  "Daily"),
+    ("1w",  "Weekly"),
+]
+
+
 def _section_command(config: dict, *, from_menu: bool = False) -> None:
     click.echo()
     click.secho("Custom command checks", bold=True)
@@ -1474,7 +1486,7 @@ def _section_command(config: dict, *, from_menu: bool = False) -> None:
     kept = _review_existing_list(
         existing_commands,
         "commands",
-        lambda c: f"{c.get('name', '?')}: {c.get('command', '?')}",
+        lambda c: _format_command_entry(c),
     )
     config["checks"]["command"]["commands"] = kept
 
@@ -1485,7 +1497,17 @@ def _section_command(config: dict, *, from_menu: bool = False) -> None:
         )
         while _prompt_yn("  Add a command check?", default=not bool(kept)):
             cmd_name = click.prompt("    Check name (a label for this check)")
-            cmd_command = click.prompt("    Shell command to run (e.g. 'curl -sf http://...')")
+
+            # Docker container option
+            container = ""
+            if _prompt_yn("    Is this a Docker container command?", default=False):
+                container = _pick_container()
+
+            if container:
+                cmd_command = click.prompt("    Command to run inside the container")
+            else:
+                cmd_command = click.prompt("    Shell command to run (e.g. 'curl -sf http://...')")
+
             cmd_expect = click.prompt(
                 "    Expected output substring (alert if missing, empty to skip)",
                 default="", show_default=False,
@@ -1495,10 +1517,82 @@ def _section_command(config: dict, *, from_menu: bool = False) -> None:
                 type=click.Choice(["critical", "warning"]),
                 default="critical",
             )
-            entry: Dict[str, Any] = {"name": cmd_name, "command": cmd_command, "severity": cmd_severity}
+
+            # Timeout
+            cmd_timeout = click.prompt(
+                "    Timeout in seconds",
+                type=int,
+                default=30,
+            )
+
+            # Schedule
+            click.echo("    Schedule (when this command runs):")
+            for i, (val, desc) in enumerate(_SCHEDULE_CHOICES, 1):
+                click.echo(f"      [{i}] {desc}")
+            sched_idx = click.prompt(
+                "    Choice",
+                type=click.IntRange(1, len(_SCHEDULE_CHOICES)),
+                default=1,
+            )
+            cmd_schedule = _SCHEDULE_CHOICES[sched_idx - 1][0]
+
+            entry: Dict[str, Any] = {
+                "name": cmd_name,
+                "command": cmd_command,
+                "severity": cmd_severity,
+            }
+            if container:
+                entry["container"] = container
             if cmd_expect.strip():
                 entry["expect_output"] = cmd_expect.strip()
+            if cmd_timeout != 30:
+                entry["timeout"] = cmd_timeout
+            if cmd_schedule:
+                entry["schedule"] = cmd_schedule
+
             config["checks"]["command"]["commands"].append(entry)
+
+
+def _format_command_entry(c: dict) -> str:
+    """Format a command entry for display in the review list."""
+    name = c.get("name", "?")
+    cmd = c.get("command", "?")
+    container = c.get("container", "")
+    parts = [f"{name}: "]
+    if container:
+        parts.append(f"docker exec {container} ")
+    parts.append(cmd)
+    extras = []
+    timeout = c.get("timeout")
+    if timeout and timeout != 30:
+        extras.append(f"timeout {timeout}s")
+    schedule = c.get("schedule")
+    if schedule:
+        extras.append(f"every {schedule}")
+    if extras:
+        parts.append(f" ({', '.join(extras)})")
+    return "".join(parts)
+
+
+def _pick_container() -> str:
+    """Let the user pick a running Docker container or type a name."""
+    containers = discover_containers()
+    if containers:
+        running = [c for c in containers if c["status"] == "running"]
+        if running:
+            click.echo("    Running containers:")
+            for i, c in enumerate(running, 1):
+                click.echo(f"      [{i}] {c['name']} ({c['image']})")
+            click.echo(f"      [{len(running) + 1}] Type a name manually")
+            idx = click.prompt(
+                "    Pick a container",
+                type=click.IntRange(1, len(running) + 1),
+                default=len(running) + 1,
+            )
+            if idx <= len(running):
+                return running[idx - 1]["name"]
+
+    return click.prompt("    Container name")
 
 
 def _section_autoupdate(config: dict, *, from_menu: bool = False) -> None:
@@ -2244,11 +2338,43 @@ def _offer_scheduling(config: dict) -> None:
     su_sudo_prefix = "sudo " if su_needs_sudo else ""
 
     # (interval, label, modules, choices) — only tiers with enabled checks
+    #
+    # Command entries with a custom ``schedule`` field get their own tier
+    # using the ``command@INTERVAL`` syntax so they run independently.
+    command_schedules: List[str] = []
+    if checks.get("command", {}).get("enabled"):
+        for cmd in checks.get("command", {}).get("commands", []):
+            sched = cmd.get("schedule", "")
+            if sched and sched not in command_schedules:
+                command_schedules.append(sched)
+
     active_tiers: List[Tuple[str, str, List[str], List[Tuple[str, str]]]] = []
     for default_interval, label, tier_checks, choices in SCHEDULE_TIERS:
         enabled_in_tier = [c for c in tier_checks if checks.get(c, {}).get("enabled")]
         if enabled_in_tier:
-            active_tiers.append((default_interval, label, enabled_in_tier, choices))
+            # If "command" is in this tier but all command entries have
+            # custom schedules, exclude it from the default tier.
+            if "command" in enabled_in_tier and command_schedules:
+                has_unscheduled = any(
+                    not cmd.get("schedule")
+                    for cmd in checks.get("command", {}).get("commands", [])
+                )
+                if not has_unscheduled:
+                    enabled_in_tier = [c for c in enabled_in_tier if c != "command"]
+            if enabled_in_tier:
+                active_tiers.append((default_interval, label, enabled_in_tier, choices))
+
+    # Add per-schedule tiers for command entries
+    _interval_labels = {
+        "1m": "every minute", "5m": "every 5 min", "15m": "every 15 min",
+        "30m": "every 30 min", "1h": "hourly", "4h": "every 4 hours",
+        "1d": "daily", "1w": "weekly",
+    }
+    for sched in command_schedules:
+        sched_label = _interval_labels.get(sched, f"every {sched}")
+        active_tiers.append((
+            sched, sched_label, [f"command@{sched}"], [],
+        ))
 
     if not active_tiers and not compose_dirs and not system_update_enabled:
         click.echo()
@@ -2313,6 +2439,10 @@ def _offer_scheduling(config: dict) -> None:
     if choice == "C":
         click.echo()
         for default_interval, _label, modules, choices in active_tiers:
+            if not choices:
+                # Per-command schedule tiers have a fixed interval
+                schedule_plan.append((default_interval, modules))
+                continue
             modules_str = ", ".join(modules)
             click.echo(f"  {modules_str}:")
             for i, (intv, desc) in enumerate(choices, 1):

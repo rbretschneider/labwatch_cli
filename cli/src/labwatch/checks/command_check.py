@@ -1,10 +1,13 @@
 """Generic command runner check — the universal escape hatch."""
 
+import shlex
 import subprocess
 from typing import List
 
 from labwatch.checks import BaseCheck, register
 from labwatch.models import CheckResult, Severity
+
+_DEFAULT_TIMEOUT = 30
 
 
 @register("command")
@@ -23,21 +26,38 @@ class CommandCheck(BaseCheck):
             command = entry.get("command", "")
             if not name or not command:
                 continue
+
+            # Schedule filtering: when module_filter is set, only run
+            # entries whose schedule matches.  Entries without a schedule
+            # field are skipped when any filter is active.
+            if self.module_filter:
+                entry_schedule = entry.get("schedule", "")
+                if entry_schedule != self.module_filter:
+                    continue
+
             results.append(self._run_command(entry))
         return results
 
     def _run_command(self, entry: dict) -> CheckResult:
         name = entry["name"]
         command = entry["command"]
+        container = entry.get("container", "")
+        timeout = entry.get("timeout", _DEFAULT_TIMEOUT)
         expect_exit = entry.get("expect_exit", 0)
         expect_output = entry.get("expect_output", "")
         severity = entry.get("severity", "critical").lower()
         fail_severity = Severity.WARNING if severity == "warning" else Severity.CRITICAL
 
+        # Build the actual shell command
+        if container:
+            shell_cmd = f"docker exec {shlex.quote(container)} {command}"
+        else:
+            shell_cmd = command
+
         try:
             result = subprocess.run(
-                command, shell=True,
-                capture_output=True, text=True, timeout=30,
+                shell_cmd, shell=True,
+                capture_output=True, text=True, timeout=timeout,
             )
 
             combined = result.stdout + result.stderr
@@ -69,7 +89,7 @@ class CommandCheck(BaseCheck):
             return CheckResult(
                 name=f"command:{name}",
                 severity=fail_severity,
-                message="Command timed out (30s)",
+                message=f"Command timed out ({timeout}s)",
             )
         except Exception as e:
             return CheckResult(

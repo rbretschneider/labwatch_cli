@@ -21,11 +21,15 @@ from labwatch.models import Severity
 
 
 def _validate_modules(modules, ctx):
-    """Validate --only module names against the check registry. Exits on error."""
+    """Validate --only module names against the check registry. Exits on error.
+
+    Module names may include a ``@filter`` suffix (e.g. ``command@5m``)
+    which is stripped before validation.
+    """
     if not modules:
         return
     valid = set(get_check_classes().keys())
-    bad = [m for m in modules if m not in valid]
+    bad = [m for m in modules if m.split("@", 1)[0] not in valid]
     if bad:
         console = _get_console(ctx)
         console.print(f"[red]Unknown check module(s): {', '.join(bad)}[/red]")
@@ -901,13 +905,23 @@ def _tree_command(branch, cfg):
         for c in cmds:
             name = c.get("name", "?")
             cmd = c.get("command", "?")
+            container = c.get("container", "")
             sev = c.get("severity", "critical")
-            desc = f"{name}: {cmd} ({sev})"
+            if container:
+                desc = f"{name}: docker exec {container} {cmd} ({sev})"
+            else:
+                desc = f"{name}: {cmd} ({sev})"
             extras = []
             if c.get("expect_output"):
                 extras.append(f"expect '{c['expect_output']}'")
             if c.get("expect_exit") is not None and c["expect_exit"] != 0:
                 extras.append(f"expect exit {c['expect_exit']}")
+            timeout = c.get("timeout")
+            if timeout and timeout != 30:
+                extras.append(f"timeout {timeout}s")
+            schedule = c.get("schedule")
+            if schedule:
+                extras.append(f"schedule {schedule}")
             if extras:
                 desc += f" ({', '.join(extras)})"
             branch.add(desc)

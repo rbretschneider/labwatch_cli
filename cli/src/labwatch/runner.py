@@ -32,21 +32,39 @@ class Runner:
         self.verbose = verbose
 
     def run(self, modules: Optional[List[str]] = None) -> CheckReport:
-        """Run all enabled checks (or a subset) and return a report."""
+        """Run all enabled checks (or a subset) and return a report.
+
+        Module names may include a ``@filter`` suffix (e.g. ``command@5m``)
+        to pass a filter value to the check class.
+        """
         hostname = self.config.get("hostname", "unknown")
         report = CheckReport(hostname=hostname)
         check_classes = get_check_classes()
 
+        # Parse module@filter syntax
+        module_names: Optional[Dict[str, Optional[str]]] = None
+        if modules:
+            module_names = {}
+            for m in modules:
+                if "@" in m:
+                    name, filt = m.split("@", 1)
+                    module_names[name] = filt
+                else:
+                    module_names[m] = None
+
         for name, cls in check_classes.items():
-            if modules and name not in modules:
+            if module_names is not None and name not in module_names:
                 continue
 
             check_cfg = self.config.get("checks", {}).get(name, {})
             if not check_cfg.get("enabled", True):
                 continue
 
+            module_filter = module_names.get(name) if module_names else None
+
             try:
-                check = cls(self.config, verbose=self.verbose)
+                check = cls(self.config, verbose=self.verbose,
+                            module_filter=module_filter)
                 results = check.run()
                 report.results.extend(results)
             except Exception as e:

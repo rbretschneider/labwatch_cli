@@ -301,6 +301,7 @@ def validate_config(config: Dict[str, Any]) -> list:
             break
 
     # Validate command checks
+    _valid_schedules = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"}
     for i, cmd in enumerate(checks.get("command", {}).get("commands", [])):
         if not cmd.get("name"):
             errors.append(f"command.commands[{i}] missing 'name'")
@@ -311,6 +312,25 @@ def validate_config(config: Dict[str, Any]) -> list:
             errors.append(
                 f"command.commands[{i}].severity must be 'warning' or 'critical'"
             )
+        if "timeout" in cmd:
+            t = cmd["timeout"]
+            if not isinstance(t, (int, float)) or t <= 0:
+                errors.append(
+                    f"command.commands[{i}].timeout must be a positive number"
+                )
+        if "schedule" in cmd:
+            s = cmd["schedule"]
+            if s not in _valid_schedules:
+                errors.append(
+                    f"command.commands[{i}].schedule must be one of "
+                    f"{', '.join(sorted(_valid_schedules))}, got '{s}'"
+                )
+        if "container" in cmd:
+            c = cmd["container"]
+            if not isinstance(c, str) or not c.strip():
+                errors.append(
+                    f"command.commands[{i}].container must be a non-empty string"
+                )
 
     # Validate network interfaces
     for i, iface in enumerate(checks.get("network", {}).get("interfaces", [])):
