@@ -135,7 +135,6 @@ def check_cmd(ctx, only, as_json, no_notify):
         modules = [m.strip() for m in only.split(",")] if only else None
         _validate_modules(modules, ctx)
 
-        logger.info("check started")
         runner = Runner(cfg, verbose=ctx.obj.get("verbose", False))
         report = runner.run(modules)
 
@@ -160,10 +159,18 @@ def check_cmd(ctx, only, as_json, no_notify):
                         sum(1 for r in report.results
                             if r.severity in (Severity.WARNING, Severity.CRITICAL)))
 
-        ok_count = sum(1 for r in report.results if r.severity == Severity.OK)
-        fail_count = len(report.results) - ok_count
-        logger.info("check complete: %d ok, %d failed, worst=%s",
-                     ok_count, fail_count, report.worst_severity.value)
+        # Build a concise but informative log line
+        ok_names = [r.name for r in report.results if r.severity == Severity.OK]
+        bad = [r for r in report.results if r.severity != Severity.OK]
+        if bad:
+            bad_parts = [f"{r.severity.value.upper()}: {r.name} — {r.message}"
+                         for r in bad]
+            logger.info("check %d/%d ok (%s) | %s",
+                        len(ok_names), len(report.results),
+                        ", ".join(ok_names), "; ".join(bad_parts))
+        else:
+            logger.info("check ALL OK (%d) — %s",
+                        len(ok_names), ", ".join(ok_names))
 
         ping_heartbeat(cfg, report.has_failures)
 
